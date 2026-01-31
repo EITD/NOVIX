@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Environment & Secrets (CRITICAL)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.secret
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Frontend build
+frontend/dist/
+frontend/build/
+frontend/.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project data - exclude user content
+data/
+backend/data/
+
+# LLM Configuration Files (Contains API Keys) - CRITICAL
+data/llm_profiles.json
+data/agent_assignments.json
+backend/data/llm_profiles.json
+backend/data/agent_assignments.json
+
+# Logs
+*.log
+traces/
+
+# Temporary Debug Scripts
+test_*.py
+debug_*.py
+verify_api_config.py
+
+# Static Assets (if generated)
+backend/static/

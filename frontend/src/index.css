@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light; /* Default to light mode */
+}
+
+html, body {
+  @apply bg-background text-ink-900 antialiased;
+  font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
+  height: 100%;
+  overflow-x: hidden;
+}
+
+/* Elegant Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-200 rounded-full hover:bg-gray-300 transition-colors;
+}
+
+/* Typography Enhancements */
+h1, h2, h3, h4, h5, h6 {
+  @apply font-serif font-medium tracking-tight text-ink-900;
+}
+
+/* Selection */
+::selection {
+  @apply bg-accent-active/20 text-ink-900;
+}
+
+/* Animation Utilities */
+.transition-smooth {
+  @apply transition-all duration-300 ease-out;
+}
