@@ -50,9 +50,13 @@ class LLMConfigService:
         return self._load_json(self.profiles_path, [])
 
     def get_assignments(self) -> Dict[str, str]:
-        return self._load_json(self.assignments_path, {
-            "archivist": "", "writer": "", "reviewer": "", "editor": ""
-        })
+        defaults = {
+            "archivist": "",
+            "writer": "",
+            "editor": ""
+        }
+        data = self._load_json(self.assignments_path, defaults)
+        return {key: data.get(key, "") for key in defaults.keys()}
 
     def save_profile(self, profile: Dict[str, Any]) -> Dict[str, Any]:
         profiles = self.get_profiles()
@@ -88,8 +92,10 @@ class LLMConfigService:
             self.save_assignments(assignments)
 
     def save_assignments(self, assignments: Dict[str, str]):
+        allowed = {"archivist", "writer", "editor"}
+        clean = {k: v for k, v in assignments.items() if k in allowed}
         current = self.get_assignments()
-        current.update(assignments)
+        current.update(clean)
         self._save_json(self.assignments_path, current)
 
     def get_profile_by_id(self, profile_id: str) -> Optional[Dict[str, Any]]:
@@ -170,7 +176,6 @@ class LLMConfigService:
             assignments = {
                 "archivist": default_id,
                 "writer": default_id,
-                "reviewer": default_id,
                 "editor": default_id
             }
             self._save_json(self.assignments_path, assignments)

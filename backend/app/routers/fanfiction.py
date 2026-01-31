@@ -8,10 +8,9 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from app.services.search_service import search_service
 from app.services.crawler_service import crawler_service
-from app.agents.extractor import ExtractorAgent
-from app.agents.batch_extractor import BatchExtractorAgent
+from app.agents.archivist import ArchivistAgent
 from app.llm_gateway.gateway import get_gateway
-from app.storage import CardStorage
+from app.storage import CanonStorage, DraftStorage
 from app.storage.cards import cards_storage
 from app.utils.logger import get_logger
 
@@ -21,6 +20,8 @@ router = APIRouter(prefix="/fanfiction", tags=["fanfiction"])
 
 # Use imported storage instance
 card_storage = cards_storage
+canon_storage = CanonStorage()
+draft_storage = DraftStorage()
 
 
 # Schema definitions
@@ -51,9 +52,10 @@ class PreviewResponse(BaseModel):
 
 class ExtractRequest(BaseModel):
     project_id: str
-    title: str
-    content: str
-    max_cards: int = 20
+    url: Optional[str] = None
+    title: Optional[str] = None
+    content: Optional[str] = None
+    max_cards: Optional[int] = None
 
 
 class BatchExtractRequest(BaseModel):
@@ -113,22 +115,35 @@ async def preview_page(request: PreviewRequest):
 
 @router.post("/extract", response_model=ExtractResponse)
 async def extract_cards(request: ExtractRequest):
-    """Deep detailed extraction for a single page (legacy/single mode)"""
+    """Extract a single card summary for a page"""
     try:
-        agent = ExtractorAgent(
-            agent_id="wiki_extractor",
-            config={}
+        title = request.title or ""
+        content = request.content or ""
+        url = request.url or ""
+
+        if url:
+            crawl_result = crawler_service.scrape_page(url)
+            if not crawl_result.get("success"):
+                return {"success": False, "error": crawl_result.get("error", "Crawl failed"), "proposals": []}
+            title = crawl_result.get("title") or title
+            content = crawl_result.get("llm_content") or crawl_result.get("content") or content
+
+        if not content:
+            return {"success": False, "error": "No content to extract", "proposals": []}
+
+        agent = ArchivistAgent(
+            gateway=get_gateway(),
+            card_storage=card_storage,
+            canon_storage=canon_storage,
+            draft_storage=draft_storage,
         )
-        
-        proposals = await agent.extract_cards(
-            title=request.title,
-            content=request.content[:15000],  # Increase limit to 15k
-            max_cards=request.max_cards
-        )
-        
+
+        proposal = await agent.extract_fanfiction_card(title=title, content=content)
+        proposal["source_url"] = url
+
         return {
             "success": True,
-            "proposals": [p.dict() for p in proposals]
+            "proposals": [proposal],
         }
     except Exception as e:
         logger.error(f"Extraction failed: {e}", exc_info=True)
@@ -140,29 +155,34 @@ async def extract_cards(request: ExtractRequest):
 
 @router.post("/extract/batch", response_model=ExtractResponse)
 async def batch_extract_cards(request: BatchExtractRequest):
-    """High-speed batch extraction for multiple pages"""
+    """Batch extraction for multiple pages (one card per page)"""
     try:
-        # 1. Concurrent Crawl (Limit to 50 for safety)
         urls = request.urls[:50]
         results = await crawler_service.scrape_pages_concurrent(urls)
-        
-        # 2. Batch Agent Processing
-        agent = BatchExtractorAgent(
-            agent_id="batch_extractor",
-            config={}
+
+        agent = ArchivistAgent(
+            gateway=get_gateway(),
+            card_storage=card_storage,
+            canon_storage=canon_storage,
+            draft_storage=draft_storage,
         )
-        
-        # Pass structured data to agent
-        proposals = await agent.execute(
-            project_id=request.project_id,
-            chapter="batch",
-            context={"pages_data": results}
-        )
-        
-        return {
-            "success": True,
-            "proposals": [p.dict() for p in proposals]
-        }
+
+        proposals: List[Dict[str, Any]] = []
+        for page in results:
+            if not page.get("success"):
+                continue
+            title = page.get("title") or ""
+            content = page.get("llm_content") or page.get("content") or ""
+            if not content:
+                continue
+            proposal = await agent.extract_fanfiction_card(title=title, content=content)
+            proposal["source_url"] = page.get("url")
+            proposals.append(proposal)
+
+        if not proposals:
+            return {"success": False, "error": "No extractable pages", "proposals": []}
+
+        return {"success": True, "proposals": proposals}
         
     except Exception as e:
         logger.error(f"Batch extraction failed: {e}", exc_info=True)

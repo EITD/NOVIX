@@ -4,7 +4,7 @@ Define data structures for API and internal use / 定义 API 和内部使用的�
 """
 
 from .project import Project, ProjectCreate
-from .card import CharacterCard, WorldCard, StyleCard, RulesCard
+from .card import CharacterCard, WorldCard, StyleCard
 from .canon import Fact, TimelineEvent, CharacterState
 from .draft import Draft, SceneBrief, ReviewResult
 
@@ -14,7 +14,6 @@ __all__ = [
     "CharacterCard",
     "WorldCard",
     "StyleCard",
-    "RulesCard",
     "Fact",
     "TimelineEvent",
     "CharacterState",

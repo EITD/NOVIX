@@ -34,7 +34,6 @@ class ContextSelector:
         context: Dict[str, Any] = {}
 
         context["style_card"] = await self.card_storage.get_style_card(project_id)
-        context["rules_card"] = await self.card_storage.get_rules_card(project_id)
 
         if character_names:
             character_cards = []

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/config", tags=["config"])
 class LLMProfile(BaseModel):
     id: Optional[str] = None
     name: str = "New Profile"
-    provider: str  # openai, anthropic, deepseek, custom, mock
+    provider: str  # openai, anthropic, deepseek, custom
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     model: Optional[str] = None
@@ -24,7 +24,6 @@ class LLMProfile(BaseModel):
 class AgentAssignments(BaseModel):
     archivist: Optional[str] = None
     writer: Optional[str] = None
-    reviewer: Optional[str] = None
     editor: Optional[str] = None
 
 # --- Endpoints ---
@@ -70,7 +69,6 @@ async def get_providers_meta():
         {"id": "anthropic", "label": "Anthropic (Claude)", "fields": ["api_key", "model"]},
         {"id": "deepseek", "label": "DeepSeek", "fields": ["api_key", "model"]},
         {"id": "custom", "label": "Custom / OpenAI Compatible", "fields": ["base_url", "api_key", "model"]},
-        {"id": "mock", "label": "Mock (Testing)", "fields": []},
     ]
 
 # --- Legacy Endpoint Support (Optional, keep if frontend needs partial compatibility during transition) ---

@@ -39,9 +39,6 @@ agents:
   writer:
     provider: anthropic
     temperature: 0.7
-  reviewer:
-    provider: openai
-    temperature: 0.2
   editor:
     provider: anthropic
     temperature: 0.5

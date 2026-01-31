@@ -3,22 +3,21 @@ import useSWR from 'swr';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate } from 'react-router-dom';
 import { sessionAPI, createWebSocket, draftsAPI, cardsAPI, projectsAPI, volumesAPI } from '../api';
-import { Button, Input, Card } from '../components/ui/core';
-import { WritingCanvas } from '../components/writing/WritingCanvas';
+import { Button, Input } from '../components/ui/core';
 import AgentsPanel from '../components/ide/panels/AgentsPanel';
 import AgentStatusPanel from '../components/ide/AgentStatusPanel';
-import {
-    Play, RotateCcw, Check, MessageSquare, AlertTriangle,
-    Terminal, Sparkles, Save, ChevronLeft, Bot, PanelRight, Plus,
-    BookOpen, PenTool, Eraser, X, Send, Loader2
-} from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
 import { ChapterCreateDialog } from '../components/project/ChapterCreateDialog';
 import { IDELayout } from '../components/ide/IDELayout';
 import { IDEProvider } from '../context/IDEContext';
 import { useIDE } from '../context/IDEContext';
-import ExtractionPreview from '../components/ExtractionPreview';
-import EntityActivityDashboard from '../components/writing/EntityActivityDashboard';
-import { Activity } from 'lucide-react';
+import AnalysisReviewDialog from '../components/writing/AnalysisReviewDialog';
+import PreWritingQuestionsDialog from '../components/PreWritingQuestionsDialog';
+import StreamingDraftView from '../components/writing/StreamingDraftView';
+import { buildLineDiff } from '../lib/diffUtils';
+import InlineDiffEditor from '../components/ide/InlineDiffEditor';
+import SaveMenu from '../components/writing/SaveMenu';
+import FanfictionView from './FanfictionView';
 
 // Helper fetcher
 const fetchChapterContent = async ([_, projectId, chapter]) => {
@@ -66,8 +65,11 @@ function WritingSessionContent({ isEmbedded = false }) {
     const [chapters, setChapters] = useState([]);
 
     // Save/Analyze UI
-    const [showSaveDialog, setShowSaveDialog] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
+    const [analysisItems, setAnalysisItems] = useState([]);
+    const [analysisLoading, setAnalysisLoading] = useState(false);
+    const [analysisSaving, setAnalysisSaving] = useState(false);
 
     // Proposal State
     const [proposals, setProposals] = useState([]);
@@ -78,23 +80,34 @@ function WritingSessionContent({ isEmbedded = false }) {
     const [messages, setMessages] = useState([]);
     const [currentDraft, setCurrentDraft] = useState(null);
     const [manualContent, setManualContent] = useState(''); // Textarea content
-    const [review, setReview] = useState(null);
     const [sceneBrief, setSceneBrief] = useState(null);
     const [draftV1, setDraftV1] = useState(null);
     const [feedback, setFeedback] = useState('');
+    const [diffReview, setDiffReview] = useState(null);
+    const lastFeedbackRef = useRef('');
+    const lastGeneratedRef = useRef(false);
+    const streamBufferRef = useRef('');
+    const streamTextRef = useRef('');
+    const streamFlushRafRef = useRef(null);
+    const serverStreamActiveRef = useRef(false);
+    const serverStreamUsedRef = useRef(false);
 
-    const [showActivity, setShowActivity] = useState(false);
-    const [expandedSteps, setExpandedSteps] = useState({ review: true, editor: true });
-
-    const toggleStep = (step) => {
-        setExpandedSteps(prev => ({ ...prev, [step]: !prev[step] }));
-    };
+    const [showPreWriteDialog, setShowPreWriteDialog] = useState(false);
+    const [preWriteQuestions, setPreWriteQuestions] = useState([]);
+    const [pendingStartPayload, setPendingStartPayload] = useState(null);
 
     // WebSocket
     const wsRef = useRef(null);
     const traceWsRef = useRef(null);
-    const [wsConnected, setWsConnected] = useState(false);
+    const wsStatusRef = useRef('disconnected');
     const [isGenerating, setIsGenerating] = useState(false);
+    const streamingRef = useRef(null);
+    const [streamingState, setStreamingState] = useState({
+        active: false,
+        progress: 0,
+        current: 0,
+        total: 0
+    });
 
     // Trace Events for AgentTimeline
     const [traceEvents, setTraceEvents] = useState([]);
@@ -107,9 +120,6 @@ function WritingSessionContent({ isEmbedded = false }) {
         content: null,
     });
 
-    // V3 Extraction State (Phase 3)
-    const [extraction, setExtraction] = useState(null);
-    const [showExtraction, setShowExtraction] = useState(false);
 
     // Draft version state
     const [currentDraftVersion, setCurrentDraftVersion] = useState('v1');
@@ -122,21 +132,110 @@ function WritingSessionContent({ isEmbedded = false }) {
     const [archivistOutput, setArchivistOutput] = useState(null);
 
     useEffect(() => {
-        const ws = createWebSocket(projectId, (data) => {
-            if (data.type === 'start_ack') addMessage('system', 'Session started!');
-            if (data.type === 'review') handleReview(data.data);
-            if (data.type === 'scene_brief') handleSceneBrief(data.data);
-            if (data.type === 'draft_v1') handleDraftV1(data.data);
-            if (data.type === 'final_draft') handleFinalDraft(data.data);
-            if (data.type === 'error') addMessage('error', data.message);
+        if (!projectId) return;
 
-            // Handle backend status updates (progress)
-            if (data.status && data.message) {
-                addMessage('system', `> ${data.message}`);
+        const wsController = createWebSocket(
+            projectId,
+            (data) => {
+                if (data.type === 'start_ack') addMessage('system', '会话已启动');
+                if (data.type === 'stream_start') {
+                    stopStreaming();
+                    clearDiffReview();
+                    serverStreamActiveRef.current = true;
+                    serverStreamUsedRef.current = true;
+                    streamBufferRef.current = '';
+                    streamTextRef.current = '';
+                    if (streamFlushRafRef.current) {
+                        window.cancelAnimationFrame(streamFlushRafRef.current);
+                        streamFlushRafRef.current = null;
+                    }
+                    lastGeneratedRef.current = true;
+                    setIsGenerating(true);
+                    setStreamingState({
+                        active: true,
+                        progress: 0,
+                        current: 0,
+                        total: data.total || 0
+                    });
+                }
+                if (data.type === 'token' && typeof data.content === 'string') {
+                    if (!serverStreamActiveRef.current) {
+                        return;
+                    }
+                    streamBufferRef.current += data.content;
+                    if (!streamFlushRafRef.current) {
+                        streamFlushRafRef.current = window.requestAnimationFrame(() => {
+                            streamTextRef.current += streamBufferRef.current;
+                            streamBufferRef.current = '';
+                            setManualContent(streamTextRef.current);
+                            const current = streamTextRef.current.length;
+                            setStreamingState(prev => ({
+                                ...prev,
+                                current,
+                                progress: prev.total ? Math.round((current / prev.total) * 100) : prev.progress
+                            }));
+                            streamFlushRafRef.current = null;
+                        });
+                    }
+                }
+                if (data.type === 'stream_end') {
+                    if (streamFlushRafRef.current) {
+                        window.cancelAnimationFrame(streamFlushRafRef.current);
+                        streamFlushRafRef.current = null;
+                    }
+                    streamTextRef.current += streamBufferRef.current;
+                    streamBufferRef.current = '';
+                    const finalText = data.draft?.content || streamTextRef.current;
+                    serverStreamActiveRef.current = false;
+                    setManualContent(finalText);
+                    setStreamingState({
+                        active: false,
+                        progress: 100,
+                        current: finalText.length,
+                        total: finalText.length
+                    });
+                    setIsGenerating(false);
+                    dispatch({ type: 'SET_WORD_COUNT', payload: finalText.length });
+                    if (data.draft) {
+                        setCurrentDraft(data.draft);
+                        setCurrentDraftVersion(data.draft.version || currentDraftVersion);
+                    }
+                    if (data.proposals) {
+                        setProposals(data.proposals);
+                    }
+                    setStatus('waiting_feedback');
+                    addMessage('assistant', '草稿已生成，可继续反馈或手动编辑。');
+                }
+                if (data.type === 'scene_brief') handleSceneBrief(data.data);
+                if (data.type === 'draft_v1') handleDraftV1(data.data);
+                if (data.type === 'final_draft') handleFinalDraft(data.data);
+                if (data.type === 'error') addMessage('error', data.message);
+
+                // Handle backend status updates (progress)
+                if (data.status && data.message) {
+                    addMessage('system', `> ${data.message}`);
+                }
+            },
+            {
+                onStatus: (status) => {
+                    if (wsStatusRef.current !== status) {
+                        if (status === 'reconnecting') {
+                            addMessage('system', '连接中断，正在重连...');
+                        }
+                        if (status === 'connected' && wsStatusRef.current === 'reconnecting') {
+                            addMessage('system', '连接已恢复');
+                        }
+                        if (status === 'disconnected') {
+                            addMessage('system', '连接已断开');
+                        }
+                    }
+
+                    wsStatusRef.current = status;
+                }
             }
-        });
-        wsRef.current = ws;
-        setWsConnected(true);
+        );
+
+        wsRef.current = wsController;
 
         // Connect to Trace WebSocket for AgentTimeline
         const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -164,14 +263,14 @@ function WritingSessionContent({ isEmbedded = false }) {
         traceWsRef.current = traceWs;
 
         return () => {
-            if (ws) ws.close();
+            if (wsController) wsController.close();
             if (traceWs) traceWs.close();
         };
     }, [projectId]);
 
     // Card State
     const [activeCard, setActiveCard] = useState(null);
-    const [cardForm, setCardForm] = useState({ name: '', identity: '', description: '' });
+    const [cardForm, setCardForm] = useState({ name: '', description: '' });
 
     // SWR for Chapter Content
     const { data: loadedContent, mutate: mutateChapter } = useSWR(
@@ -192,82 +291,21 @@ function WritingSessionContent({ isEmbedded = false }) {
 
     // Sync SWR data to manualContent
     useEffect(() => {
-        if (loadedContent !== undefined) {
-            setManualContent(loadedContent);
-            dispatch({ type: 'SET_WORD_COUNT', payload: loadedContent.length });
-            // Only center cursor if we just switched chapters (optional optimization)
-            // dispatch({ type: 'SET_CURSOR_POSITION', payload: { line: 1, column: 1 } });
+        if (loadedContent === undefined || streamingState.active || state.unsavedChanges) {
+            return;
         }
-    }, [loadedContent, dispatch]);
 
-
-    // 监听 Context 中的文档选择（章节或卡片）
-    useEffect(() => {
-        if (!state.activeDocument) return;
-
-        if (state.activeDocument.type === 'chapter' && state.activeDocument.id) {
-            setActiveCard(null); // Clear card state
-            handleChapterSelect(state.activeDocument.id);
-        } else if (['character', 'world'].includes(state.activeDocument.type)) {
-            // Switch to Card Mode
-            setChapterInfo({ chapter: null, chapter_title: null, content: null });
-
-            // Initial setup with basic info
-            const cardData = state.activeDocument.data || { name: state.activeDocument.id };
-            setActiveCard({ ...cardData, type: state.activeDocument.type });
-            setCardForm({
-                name: cardData.name || '',
-                identity: '',
-                description: ''
-            });
-            setStatus('card_editing');
-
-            // Fetch full details
-            const fetchCardDetails = async () => {
-                try {
-                    let resp;
-                    if (state.activeDocument.type === 'character') {
-                        resp = await cardsAPI.getCharacter(projectId, state.activeDocument.id);
-                    } else {
-                        resp = await cardsAPI.getWorld(projectId, state.activeDocument.id);
-                    }
-                    if (resp.data) {
-                        const fullData = resp.data;
-                        setActiveCard(prev => ({ ...prev, ...fullData }));
-
-                        // Populate form based on type
-                        if (state.activeDocument.type === 'character') {
-                            setCardForm({
-                                name: fullData.name || '',
-                                identity: fullData.identity || '',
-                                appearance: fullData.appearance || '',
-                                motivation: fullData.motivation || '',
-                                personality: Array.isArray(fullData.personality) ? fullData.personality.join(', ') : (fullData.personality || ''),
-                                speech_pattern: fullData.speech_pattern || '',
-                                arc: fullData.arc || '',
-                                boundaries: fullData.boundaries || []
-                            });
-                        } else {
-                            setCardForm({
-                                name: fullData.name || '',
-                                category: fullData.category || '',
-                                description: fullData.description || '',
-                                rules: Array.isArray(fullData.rules) ? fullData.rules.join('\n') : (fullData.rules || ''),
-                                immutable: fullData.immutable || false
-                            });
-                        }
-                    }
-                } catch (e) {
-                    console.error("Failed to fetch card details", e);
-                    addMessage('error', '加载卡片详情失败: ' + e.message);
-                }
-            };
-
-            if (state.activeDocument.id) {
-                fetchCardDetails();
-            }
+        if (lastGeneratedRef.current && manualContent && !(loadedContent || '').trim()) {
+            return;
         }
-    }, [state.activeDocument]);
+
+        setManualContent(loadedContent);
+        dispatch({ type: 'SET_WORD_COUNT', payload: loadedContent.length });
+        lastGeneratedRef.current = false;
+        // Only center cursor if we just switched chapters (optional optimization)
+        // dispatch({ type: 'SET_CURSOR_POSITION', payload: { line: 1, column: 1 } });
+    }, [loadedContent, dispatch, streamingState.active, manualContent, state.unsavedChanges]);
+
 
     useEffect(() => {
         loadChapters();
@@ -292,8 +330,26 @@ function WritingSessionContent({ isEmbedded = false }) {
 
     const handleChapterSelect = async (chapter) => {
         // Just set the chapter, let SWR handle fetching
-        setChapterInfo({ chapter, chapter_title: `Chapter ${chapter}`, content: '' }); // content will be filled by SWR
+        stopStreaming();
+        clearDiffReview();
+        setChapterInfo({ chapter, chapter_title: '', content: '' }); // content will be filled by SWR
         setStatus('editing');
+        try {
+            const summaryResp = await draftsAPI.getSummary(projectId, chapter);
+            const summary = summaryResp.data || {};
+            const normalizedChapter = summary.chapter || chapter;
+            const title = summary.title || summary.chapter_title || '';
+            setChapterInfo((prev) => ({
+                ...prev,
+                chapter: normalizedChapter,
+                chapter_title: title
+            }));
+            if (normalizedChapter !== chapter) {
+                dispatch({ type: 'SET_ACTIVE_DOCUMENT', payload: { type: 'chapter', id: normalizedChapter } });
+            }
+        } catch (e) {
+            // Summary may not exist yet.
+        }
     };
 
     const handleChapterCreate = async (chapterData) => {
@@ -303,20 +359,27 @@ function WritingSessionContent({ isEmbedded = false }) {
 
         // Persist the new chapter immediately
         setIsSaving(true);
+        let normalizedChapter = chapterNum;
         try {
-            await draftsAPI.updateContent(projectId, chapterNum, {
+            const resp = await draftsAPI.updateContent(projectId, chapterNum, {
                 content: '',
                 title: chapterTitle
             });
-            addMessage('system', `章节 ${chapterNum} 已创建`);
+            normalizedChapter = resp.data?.chapter || chapterNum;
+            addMessage('system', `?? ${normalizedChapter} ???`);
+            if (normalizedChapter !== chapterNum) {
+                dispatch({ type: 'SET_ACTIVE_DOCUMENT', payload: { type: 'chapter', id: normalizedChapter } });
+            }
         } catch (e) {
-            addMessage('error', '创建章节失败: ' + e.message);
+            addMessage('error', '??????: ' + e.message);
         } finally {
             setIsSaving(false);
         }
 
-        setChapterInfo({ chapter: chapterNum, chapter_title: chapterTitle, content: '' });
+        setChapterInfo({ chapter: normalizedChapter, chapter_title: chapterTitle, content: '' });
         setManualContent('');
+        stopStreaming();
+        clearDiffReview();
         setShowChapterDialog(false);
         setStatus('idle');
         await loadChapters();
@@ -326,13 +389,163 @@ function WritingSessionContent({ isEmbedded = false }) {
         setMessages(prev => [...prev, { type, content, time: new Date() }]);
     };
 
+    const clearDiffReview = useCallback(() => {
+        setDiffReview(null);
+    }, []);
+
+    const stopStreaming = useCallback(() => {
+        if (streamingRef.current?.timer) {
+            streamingRef.current.timer();
+        }
+        streamingRef.current = null;
+        setStreamingState({
+            active: false,
+            progress: 0,
+            current: 0,
+            total: 0
+        });
+    }, []);
+
+    const startStreamingDraft = useCallback((targetText, options = {}) => {
+        const { onComplete } = options;
+        stopStreaming();
+
+        const safeText = targetText || '';
+        if (!safeText) {
+        setManualContent('');
+        setIsGenerating(false);
+        onComplete?.();
+        return;
+        }
+
+        setIsGenerating(true);
+        const total = safeText.length;
+        const charsPerSecond = Math.min(420, Math.max(180, Math.round(total / 3)));
+        let index = 0;
+        let lastTs = performance.now();
+        let rafId = null;
+
+        setManualContent('');
+        setStreamingState({
+            active: true,
+            progress: 0,
+            current: 0,
+            total
+        });
+        lastGeneratedRef.current = true;
+
+        const initialBurst = Math.min(total, Math.max(12, Math.floor(total * 0.03)));
+        if (initialBurst > 0) {
+            index = initialBurst;
+            setManualContent(safeText.slice(0, index));
+            setStreamingState({
+                active: index < total,
+                progress: Math.round((index / total) * 100),
+                current: index,
+                total
+            });
+        }
+
+        const tick = (ts) => {
+            const delta = Math.max(0, ts - lastTs);
+            const increment = Math.max(1, Math.floor((delta / 1000) * charsPerSecond));
+            index = Math.min(total, index + increment);
+            lastTs = ts;
+
+            setManualContent(safeText.slice(0, index));
+            setStreamingState({
+                active: index < total,
+                progress: Math.round((index / total) * 100),
+                current: index,
+                total
+            });
+
+            if (index >= total) {
+                streamingRef.current = null;
+                setIsGenerating(false);
+                dispatch({ type: 'SET_WORD_COUNT', payload: total });
+                onComplete?.();
+                return;
+            }
+
+            rafId = window.requestAnimationFrame(tick);
+        };
+
+        rafId = window.requestAnimationFrame(tick);
+        streamingRef.current = {
+            timer: () => {
+                if (rafId) window.cancelAnimationFrame(rafId);
+            }
+        };
+    }, [dispatch, stopStreaming]);
+
+    useEffect(() => {
+        return () => {
+            stopStreaming();
+        };
+    }, [stopStreaming]);
+
+    // 监听 Context 中的文档选择（章节或卡片）
+    useEffect(() => {
+        if (!state.activeDocument) return;
+
+        if (state.activeDocument.type === 'chapter' && state.activeDocument.id) {
+            stopStreaming();
+            clearDiffReview();
+            setActiveCard(null); // Clear card state
+            handleChapterSelect(state.activeDocument.id);
+        } else if (['character', 'world'].includes(state.activeDocument.type)) {
+            // Switch to Card Mode
+            stopStreaming();
+            clearDiffReview();
+            setChapterInfo({ chapter: null, chapter_title: null, content: null });
+
+            // Initial setup with basic info
+            const cardData = state.activeDocument.data || { name: state.activeDocument.id };
+            setActiveCard({ ...cardData, type: state.activeDocument.type });
+            setCardForm({
+                  name: cardData.name || '',
+                  description: ''
+              });
+            setStatus('card_editing');
+
+            // Fetch full details
+            const fetchCardDetails = async () => {
+                try {
+                    let resp;
+                    if (state.activeDocument.type === 'character') {
+                        resp = await cardsAPI.getCharacter(projectId, state.activeDocument.id);
+                    } else {
+                        resp = await cardsAPI.getWorld(projectId, state.activeDocument.id);
+                    }
+                    const fullData = resp?.data || {};
+                    setCardForm({
+                        name: fullData.name || cardData.name || '',
+                        description: fullData.description || ''
+                    });
+                } catch (e) {
+                    console.error("Failed to fetch card details", e);
+                    addMessage('error', '加载卡片详情失败: ' + e.message);
+                }
+            };
+
+            if (state.activeDocument.id) {
+                fetchCardDetails();
+            }
+        }
+    }, [state.activeDocument, stopStreaming, clearDiffReview, projectId]);
+
     // Handlers
     const handleStart = async (chapter, mode, instruction = null) => {
         if (!chapter) {
-            alert('Please select a chapter first');
+            alert('请先选择章节');
             return;
         }
 
+        stopStreaming();
+        clearDiffReview();
+        serverStreamActiveRef.current = false;
+        serverStreamUsedRef.current = false;
         setStatus('starting');
         setIsGenerating(true);
 
@@ -357,20 +570,31 @@ function WritingSessionContent({ isEmbedded = false }) {
 
             if (!result.success) {
                 setArchivistStatus('error');
-                throw new Error(result.error || 'Session start failed');
+                throw new Error(result.error || '会话启动失败');
             }
 
             setArchivistStatus('done');
+            if (result.status === 'waiting_user_input' && result.questions?.length) {
+                if (result.scene_brief) {
+                    setSceneBrief(result.scene_brief);
+                    setArchivistOutput(result.scene_brief);
+                }
+                setWriterStatus('idle');
+                setEditorStatus('idle');
+                setPreWriteQuestions(result.questions);
+                setPendingStartPayload(payload);
+                setShowPreWriteDialog(true);
+                setStatus('waiting_user_input');
+                setIsGenerating(false);
+                return;
+            }
+
             setWriterStatus('done');
-            setEditorStatus('done');
+            setEditorStatus('idle');
 
             if (result.scene_brief) {
                 setSceneBrief(result.scene_brief);
                 setArchivistOutput(result.scene_brief);
-            }
-
-            if (result.review) {
-                setReview(result.review);
             }
 
             if (result.draft_v1) {
@@ -378,10 +602,13 @@ function WritingSessionContent({ isEmbedded = false }) {
             }
 
             const finalDraft = result.draft_v2 || result.draft_v1;
-            if (finalDraft) {
+            const shouldUseHttpDraft = !serverStreamActiveRef.current && !serverStreamUsedRef.current;
+            if (finalDraft && shouldUseHttpDraft) {
                 setCurrentDraft(finalDraft);
-                setManualContent(finalDraft.content || '');
                 setCurrentDraftVersion(result.draft_v2 ? 'v2' : 'v1');
+                startStreamingDraft(finalDraft.content || '');
+            } else if (shouldUseHttpDraft) {
+                setIsGenerating(false);
             }
 
             if (result.proposals) {
@@ -389,42 +616,107 @@ function WritingSessionContent({ isEmbedded = false }) {
             }
 
             setStatus('waiting_feedback');
-            addMessage('system', '草稿已生成，可继续反馈或手动编辑。');
-            setIsGenerating(false);
+            if (!serverStreamActiveRef.current && !serverStreamUsedRef.current) {
+                addMessage('assistant', '草稿已生成，可继续反馈或手动编辑。');
+            }
         } catch (e) {
-            addMessage('error', 'Failed to start: ' + e.message);
+            addMessage('error', '启动失败: ' + e.message);
             setStatus('idle');
             setIsGenerating(false);
             setArchivistStatus('error');
         }
     };
 
-    const handleReview = (data) => {
-        setReview(data);
-        setStatus('editing');
-        addMessage('system', 'Review received');
-        setIsGenerating(false);
+    const handlePreWriteConfirm = async (answers) => {
+        if (!pendingStartPayload) return;
+        setShowPreWriteDialog(false);
+        stopStreaming();
+        clearDiffReview();
+        serverStreamActiveRef.current = false;
+        serverStreamUsedRef.current = false;
+        setIsGenerating(true);
+        setWriterStatus('working');
+        setEditorStatus('idle');
+
+        try {
+            const resp = await sessionAPI.answerQuestions(projectId, {
+                ...pendingStartPayload,
+                answers
+            });
+            const result = resp.data;
+
+            if (!result.success) {
+                setWriterStatus('error');
+                throw new Error(result.error || '回答问题失败');
+            }
+
+            setWriterStatus('done');
+            setEditorStatus('idle');
+
+            if (result.scene_brief) {
+                setSceneBrief(result.scene_brief);
+                setArchivistOutput(result.scene_brief);
+            }
+            if (result.draft_v1) {
+                setDraftV1(result.draft_v1);
+            }
+
+            const finalDraft = result.draft_v2 || result.draft_v1;
+            const shouldUseHttpDraft = !serverStreamActiveRef.current && !serverStreamUsedRef.current;
+            if (finalDraft && shouldUseHttpDraft) {
+                setCurrentDraft(finalDraft);
+                setCurrentDraftVersion(result.draft_v2 ? 'v2' : 'v1');
+                startStreamingDraft(finalDraft.content || '');
+            } else if (shouldUseHttpDraft) {
+                setIsGenerating(false);
+            }
+
+            if (result.proposals) {
+                setProposals(result.proposals);
+            }
+
+            setStatus('waiting_feedback');
+            if (!serverStreamActiveRef.current && !serverStreamUsedRef.current) {
+                addMessage('assistant', '草稿已生成，可继续反馈或手动编辑。');
+            }
+        } catch (e) {
+            addMessage('error', '生成失败: ' + e.message);
+            setStatus('idle');
+            setIsGenerating(false);
+        } finally {
+            setPendingStartPayload(null);
+        }
+    };
+
+    const handlePreWriteSkip = () => {
+        handlePreWriteConfirm([]);
     };
 
     const handleSceneBrief = (data) => {
         setSceneBrief(data);
-        addMessage('system', 'Scene brief received');
+        addMessage('assistant', '场景简报已生成');
     };
 
     const handleDraftV1 = (data) => {
+        if (serverStreamActiveRef.current || serverStreamUsedRef.current) {
+            return;
+        }
         setDraftV1(data);
-        setManualContent(data.content || '');
+        clearDiffReview();
+        startStreamingDraft(data.content || '');
         setStatus('waiting_feedback');
-        addMessage('system', 'Draft V1 ready! Review and submit feedback or edit manually.');
-        setIsGenerating(false);
+        addMessage('assistant', '草稿已生成，可继续反馈或手动编辑。');
     };
 
     const handleFinalDraft = (data) => {
+        if (serverStreamActiveRef.current || serverStreamUsedRef.current) {
+            return;
+        }
         setCurrentDraft(data);
-        setManualContent(data.content || '');
+        clearDiffReview();
+        startStreamingDraft(data.content || '');
         setStatus('completed');
-        addMessage('system', 'Final draft completed!');
-        setIsGenerating(false);
+        addMessage('assistant', '终稿已完成。');
     };
 
     const handleSubmitFeedback = async (feedbackOverride) => {
@@ -432,14 +724,20 @@ function WritingSessionContent({ isEmbedded = false }) {
         if (!textToSubmit?.trim()) return;
 
         try {
+            const baseContent = manualContent || '';
+            const baseVersion = currentDraftVersion;
             setIsGenerating(true);
             setStatus('editing');
 
             setAgentMode('edit');
             setEditorStatus('working');
 
-            addMessage('user', `?? ????: ${textToSubmit}`);
-            addMessage('system', '??????...');
+            stopStreaming();
+            clearDiffReview();
+            lastFeedbackRef.current = textToSubmit;
+
+            addMessage('user', `修改意见：${textToSubmit}`);
+            addMessage('system', '编辑处理中...');
             setFeedback('');
 
             const resp = await sessionAPI.submitFeedback(projectId, {
@@ -452,14 +750,32 @@ function WritingSessionContent({ isEmbedded = false }) {
             if (result.success) {
                 setEditorStatus('done');
                 if (result.draft) {
+                    const nextContent = result.draft.content || '';
                     setCurrentDraft(result.draft);
-                    setManualContent(result.draft.content || '');
+                    setManualContent(nextContent);
+
+                    if (baseContent && nextContent && baseContent !== nextContent) {
+                        const diff = buildLineDiff(baseContent, nextContent, { contextLines: 2 });
+                        const hunksWithReason = diff.hunks.map((hunk) => ({
+                            ...hunk,
+                            reason: lastFeedbackRef.current || '根据用户反馈进行调整'
+                        }));
+                        const revisedVersion = result.version || currentDraftVersion;
+                        setDiffReview({
+                            ...diff,
+                            hunks: hunksWithReason,
+                            originalContent: baseContent,
+                            revisedContent: nextContent,
+                            originalVersion: baseVersion,
+                            revisedVersion
+                        });
+                    }
                 }
                 if (result.version) {
                     setCurrentDraftVersion(result.version);
                 }
                 setStatus('waiting_feedback');
-                addMessage('system', '?????????????????');
+                addMessage('assistant', '修改已完成，可查看差异并继续反馈。');
             } else {
                 setEditorStatus('error');
                 throw new Error(result.error || 'Edit failed');
@@ -467,61 +783,123 @@ function WritingSessionContent({ isEmbedded = false }) {
 
             setIsGenerating(false);
         } catch (e) {
-            addMessage('error', '????: ' + e.message);
+            addMessage('error', '编辑失败: ' + e.message);
             setEditorStatus('error');
             setIsGenerating(false);
             setStatus('waiting_feedback');
         }
     };
 
+    const handleAcceptAllDiff = () => {
+        if (!diffReview) return;
+        const nextContent = diffReview.revisedContent || '';
+        setManualContent(nextContent);
+        dispatch({ type: 'SET_WORD_COUNT', payload: nextContent.length });
+        clearDiffReview();
+    };
+
+    const handleRejectAllDiff = () => {
+        if (!diffReview) return;
+        const nextContent = diffReview.originalContent || '';
+        setManualContent(nextContent);
+        dispatch({ type: 'SET_WORD_COUNT', payload: nextContent.length });
+        clearDiffReview();
+    };
+
+    const saveDraftContent = async () => {
+        if (!chapterInfo.chapter) return { success: false };
+        const resp = await draftsAPI.updateContent(projectId, chapterInfo.chapter, {
+            content: manualContent,
+            title: chapterInfo.chapter_title || ''
+        });
+        if (resp.data?.success) {
+            const normalizedChapter = resp.data?.chapter || chapterInfo.chapter;
+            if (normalizedChapter && normalizedChapter !== chapterInfo.chapter) {
+                setChapterInfo((prev) => ({ ...prev, chapter: normalizedChapter }));
+                dispatch({ type: 'SET_ACTIVE_DOCUMENT', payload: { type: 'chapter', id: normalizedChapter } });
+                await loadChapters();
+            }
+            if (resp.data?.title !== undefined) {
+                setChapterInfo((prev) => ({ ...prev, chapter_title: resp.data.title }));
+            }
+            dispatch({ type: 'SET_SAVED' });
+            mutateChapter(manualContent, false);
+        }
+        return resp.data;
+    };
+
     const handleManualSave = async () => {
         if (!chapterInfo.chapter) return;
         setIsSaving(true);
         try {
-            const resp = await draftsAPI.updateContent(projectId, chapterInfo.chapter, { content: manualContent });
-            if (resp.data.success) {
-                addMessage('system', '草稿已保存');
-                dispatch({ type: 'SET_SAVED' });
-                setShowSaveDialog(true);
-                // Update SWR cache
-                mutateChapter(manualContent, false);
+            const result = await saveDraftContent();
+            if (result?.success) {
+                addMessage('system', '\u8349\u7a3f\u5df2\u4fdd\u5b58');
             }
         } catch (e) {
-            addMessage('error', '保存失败: ' + e.message);
+            addMessage('error', '\u4fdd\u5b58\u5931\u8d25: ' + e.message);
         } finally {
             setIsSaving(false);
         }
     };
 
-    // V3: Handle finalize chapter with confirmed extraction (Phase 3)
-    const handleFinalizeChapter = async (confirmedExtraction) => {
+    const handleAnalyzeAndSave = async () => {
         if (!chapterInfo.chapter) return;
-        setIsSaving(true);
-
+        setAnalysisLoading(true);
         try {
-            const resp = await sessionAPI.post(`/v3/${projectId}/finalize`, {
-                chapter: chapterInfo.chapter,
-                draft_content: manualContent,
-                confirmed_extraction: confirmedExtraction
+            const saved = await saveDraftContent();
+            if (!saved?.success) {
+                throw new Error(saved?.message || '\u4fdd\u5b58\u5931\u8d25');
+            }
+            const normalizedChapter = saved?.chapter || chapterInfo.chapter;
+            const resp = await sessionAPI.analyze(projectId, {
+                chapter: normalizedChapter,
+                content: manualContent,
+                chapter_title: chapterInfo.chapter_title || '',
             });
-
-            if (resp.data.success) {
-                const stats = resp.data.stats || {};
-                addMessage('system', `✅ 章节已保存! 事实: ${stats.facts_saved || 0}, 新实体: ${stats.entities_created || 0}`);
-                setShowExtraction(false);
-                setExtraction(null);
-                dispatch({ type: 'SET_SAVED' });
+            if (resp.data?.success) {
+                setAnalysisItems([{ chapter: normalizedChapter, analysis: resp.data.analysis || {} }]);
+                setAnalysisDialogOpen(true);
+                addMessage('system', '\u5206\u6790\u5b8c\u6210，\u8bf7\u786e\u8ba4\u5e76\u4fdd\u5b58\u3002');
+            } else {
+                throw new Error(resp.data?.error || '\u5206\u6790\u5931\u8d25');
             }
         } catch (e) {
-            addMessage('error', '保存失败: ' + e.message);
+            addMessage('error', '\u5206\u6790\u5931\u8d25: ' + e.message);
         } finally {
-            setIsSaving(false);
+            setAnalysisLoading(false);
         }
     };
 
-    const handleCancelExtraction = () => {
-        setShowExtraction(false);
-        // Keep extraction data in case user wants to revise
+    const handleSaveAnalysis = async (payload) => {
+        setAnalysisSaving(true);
+        try {
+            if (Array.isArray(payload)) {
+                const resp = await sessionAPI.saveAnalysisBatch(projectId, {
+                    items: payload,
+                    overwrite: true,
+                });
+                if (!resp.data?.success) {
+                    throw new Error(resp.data?.error || '\u5206\u6790\u5931\u8d25');
+                }
+            } else if (chapterInfo.chapter) {
+                const resp = await sessionAPI.saveAnalysis(projectId, {
+                    chapter: chapterInfo.chapter,
+                    analysis: payload,
+                    overwrite: true,
+                });
+                if (!resp.data?.success) {
+                    throw new Error(resp.data?.error || '\u5206\u6790\u5931\u8d25');
+                }
+            }
+            addMessage('system', '\u5206\u6790\u4fdd\u5b58\u5b8c\u6210');
+            setAnalysisDialogOpen(false);
+            setAnalysisItems([]);
+        } catch (e) {
+            addMessage('error', '\u4fdd\u5b58\u5931\u8d25: ' + e.message);
+        } finally {
+            setAnalysisSaving(false);
+        }
     };
 
     // Phase 4.3: Handle user answer for AskUser
@@ -532,15 +910,14 @@ function WritingSessionContent({ isEmbedded = false }) {
         try {
             if (activeCard.type === 'character') {
                 const payload = {
-                    ...cardForm,
-                    personality: typeof cardForm.personality === 'string' ? cardForm.personality.split(',').map(s => s.trim()).filter(Boolean) : cardForm.personality,
-                    // ensure other array fields if needed
+                    name: cardForm.name || '',
+                    description: cardForm.description || ''
                 };
                 await cardsAPI.updateCharacter(projectId, activeCard.name, payload);
             } else {
                 const payload = {
-                    ...cardForm,
-                    rules: typeof cardForm.rules === 'string' ? cardForm.rules.split('\n').filter(Boolean) : cardForm.rules
+                    name: cardForm.name || '',
+                    description: cardForm.description || ''
                 };
                 await cardsAPI.updateWorld(projectId, activeCard.name, payload);
             }
@@ -553,20 +930,15 @@ function WritingSessionContent({ isEmbedded = false }) {
         }
     };
 
-    const handleAnalyzeConfirm = async () => {
-        setShowSaveDialog(false);
-        if (!chapterInfo.chapter) return;
-        try {
-            const resp = await sessionAPI.analyze(projectId, { chapter: chapterInfo.chapter });
-            if (resp.data.success) {
-                addMessage('system', '分析任务已提交');
-            }
-        } catch (e) {
-            addMessage('error', '分析失败: ' + e.message);
-        }
-    };
-
     const renderMainContent = () => {
+        if (state.activeActivity === 'fanfiction') {
+            return (
+                <FanfictionView
+                    embedded
+                    onClose={() => dispatch({ type: 'SET_ACTIVE_PANEL', payload: 'explorer' })}
+                />
+            );
+        }
         return (
             <AnimatePresence mode="wait">
                 {status === 'card_editing' && activeCard ? (
@@ -585,7 +957,19 @@ function WritingSessionContent({ isEmbedded = false }) {
                                     {activeCard.type === 'character' ? '👤' : '🌍'}
                                 </div>
                                 <div>
-                                    <h1 className="text-2xl font-serif font-bold text-ink-900">{cardForm.name || '未命名卡片'}</h1>
+                                    <div className="mb-4 pb-3 border-b border-border flex flex-wrap items-center gap-3">
+                            <span className="text-[11px] font-mono text-ink-500 uppercase tracking-wider">{chapterInfo.chapter}</span>
+                            <input
+                                className="flex-1 min-w-[200px] bg-transparent text-2xl font-serif font-bold text-ink-900 outline-none placeholder:text-ink-300"
+                                value={chapterInfo.chapter_title || ''}
+                                onChange={(e) => {
+                                    setChapterInfo((prev) => ({ ...prev, chapter_title: e.target.value }));
+                                    dispatch({ type: 'SET_UNSAVED' });
+                                }}
+                                placeholder="?????"
+                                disabled={!chapterInfo.chapter}
+                            />
+                        </div>
                                     <p className="text-xs text-ink-400 font-mono uppercase tracking-wider">{activeCard.type === 'character' ? 'CHARACTER CARD' : 'WORLD CARD'}</p>
                                 </div>
                             </div>
@@ -612,130 +996,25 @@ function WritingSessionContent({ isEmbedded = false }) {
                                 />
                             </div>
 
-                            {/* Character Fields */}
-                            {activeCard.type === 'character' && (
-                                <>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">身份 / Identity</label>
-                                        <Input
-                                            value={cardForm.identity || ''}
-                                            onChange={e => setCardForm(prev => ({ ...prev, identity: e.target.value }))}
-                                            placeholder="e.g. 25岁，私家侦探"
-                                            className="bg-surface/50"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">外貌 / Appearance</label>
-                                        <textarea
-                                            className="w-full min-h-[80px] p-3 rounded-md border border-input bg-surface/50 text-sm focus:ring-1 focus:ring-primary resize-none overflow-hidden"
-                                            value={cardForm.appearance || ''}
-                                            onChange={e => {
-                                                setCardForm(prev => ({ ...prev, appearance: e.target.value }));
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
-                                            }}
-                                            onFocus={e => {
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
-                                            }}
-                                            placeholder="外貌特征描述..."
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">核心动机 / Motivation</label>
-                                        <Input
-                                            value={cardForm.motivation || ''}
-                                            onChange={e => setCardForm(prev => ({ ...prev, motivation: e.target.value }))}
-                                            placeholder="角色的核心驱动力..."
-                                            className="bg-surface/50"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">性格特征 / Personality (逗号分隔)</label>
-                                        <Input
-                                            value={cardForm.personality || ''}
-                                            onChange={e => setCardForm(prev => ({ ...prev, personality: e.target.value }))}
-                                            placeholder="勇敢, 鲁莽, 忠诚..."
-                                            className="bg-surface/50"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">说话风格 / Speech Pattern</label>
-                                        <Input
-                                            value={cardForm.speech_pattern || ''}
-                                            onChange={e => setCardForm(prev => ({ ...prev, speech_pattern: e.target.value }))}
-                                            placeholder="语速快，喜欢用比喻..."
-                                            className="bg-surface/50"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">角色弧光 / Arc</label>
-                                        <textarea
-                                            className="w-full min-h-[100px] p-3 rounded-md border border-input bg-surface/50 text-sm focus:ring-1 focus:ring-primary resize-none overflow-hidden"
-                                            value={cardForm.arc || ''}
-                                            onChange={e => {
-                                                setCardForm(prev => ({ ...prev, arc: e.target.value }));
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
-                                            }}
-                                            onFocus={e => {
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
-                                            }}
-                                            placeholder="角色的成长与变化路径..."
-                                        />
-                                    </div>
-                                </>
-                            )}
+                            {/* Card Description */}
+                            <div className="space-y-1">
+                                <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">Description</label>
+                                <textarea
+                                    className="w-full min-h-[200px] p-3 rounded-md border border-input bg-surface/50 text-sm focus:ring-1 focus:ring-primary resize-none overflow-hidden"
+                                    value={cardForm.description || ''}
+                                    onChange={e => {
+                                        setCardForm(prev => ({ ...prev, description: e.target.value }));
+                                        e.target.style.height = 'auto';
+                                        e.target.style.height = e.target.scrollHeight + 'px';
+                                    }}
+                                    onFocus={e => {
+                                        e.target.style.height = 'auto';
+                                        e.target.style.height = e.target.scrollHeight + 'px';
+                                    }}
+                                    placeholder="Write a concise description"
+                                />
+                            </div>
 
-                            {/* World Fields */}
-                            {activeCard.type === 'world' && (
-                                <>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">类别 / Category</label>
-                                        <Input
-                                            value={cardForm.category || ''}
-                                            onChange={e => setCardForm(prev => ({ ...prev, category: e.target.value }))}
-                                            placeholder="e.g. 地点, 魔法, 组织..."
-                                            className="bg-surface/50"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">详细描述 / Description</label>
-                                        <textarea
-                                            className="w-full min-h-[200px] p-3 rounded-md border border-input bg-surface/50 text-sm focus:ring-1 focus:ring-primary resize-none overflow-hidden"
-                                            value={cardForm.description || ''}
-                                            onChange={e => {
-                                                setCardForm(prev => ({ ...prev, description: e.target.value }));
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
-                                            }}
-                                            onFocus={e => {
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
-                                            }}
-                                            placeholder="关于此设定的详细描述..."
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">规则与约束 / Rules (每行一条)</label>
-                                        <textarea
-                                            className="w-full min-h-[150px] p-3 rounded-md border border-input bg-surface/50 text-sm focus:ring-1 focus:ring-primary resize-none overflow-hidden font-mono"
-                                            value={cardForm.rules || ''}
-                                            onChange={e => {
-                                                setCardForm(prev => ({ ...prev, rules: e.target.value }));
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
-                                            }}
-                                            onFocus={e => {
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
-                                            }}
-                                            placeholder="该设定涉及的规则..."
-                                        />
-                                    </div>
-                                </>
-                            )}
                         </div>
                     </motion.div>
                 ) : !chapterInfo.chapter ? (
@@ -764,49 +1043,72 @@ function WritingSessionContent({ isEmbedded = false }) {
                         transition={{ duration: 0.3 }}
                         className="h-full flex flex-col relative"
                     >
-                        <h1 className="text-2xl font-serif font-bold text-ink-900 mb-4 pb-3 border-b border-border flex-shrink-0">
-                            {chapterInfo.chapter_title || `第 ${chapterInfo.chapter} 章`}
-                        </h1>
-                        <textarea
-                            className="flex-1 w-full resize-none border-none outline-none bg-transparent text-base font-serif text-ink-900 leading-relaxed focus:ring-0 placeholder:text-ink-300"
-                            value={manualContent}
-                            onChange={(e) => {
-                                setManualContent(e.target.value);
-                                dispatch({ type: 'SET_WORD_COUNT', payload: e.target.value.length });
-                                dispatch({ type: 'SET_UNSAVED' });
-                            }}
-                            onSelect={(e) => {
-                                const text = e.target.value.substring(0, e.target.selectionStart);
-                                const lines = text.split('\n');
-                                dispatch({
-                                    type: 'SET_CURSOR_POSITION',
-                                    payload: {
-                                        line: lines.length,
-                                        column: lines[lines.length - 1].length + 1
-                                    }
-                                });
-                            }}
-                            placeholder="开始写作..."
-                            disabled={!chapterInfo.chapter || isGenerating}
-                            spellCheck={false}
-                        />
-
-                        {/* V3: Extraction Preview (Phase 3) */}
-                        {showExtraction && extraction && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -20 }}
-                                transition={{ duration: 0.3 }}
-                                className="mt-4"
-                            >
-                                <ExtractionPreview
-                                    extraction={extraction}
-                                    onConfirm={handleFinalizeChapter}
-                                    onCancel={handleCancelExtraction}
+                        <div className="mb-4 pb-3 border-b border-border flex flex-wrap items-center gap-3">
+                            <span className="text-[11px] font-mono text-ink-500 uppercase tracking-wider">{chapterInfo.chapter}</span>
+                            <input
+                                className="flex-1 min-w-[200px] bg-transparent text-2xl font-serif font-bold text-ink-900 outline-none placeholder:text-ink-300"
+                                value={chapterInfo.chapter_title || ''}
+                                onChange={(e) => {
+                                    setChapterInfo((prev) => ({ ...prev, chapter_title: e.target.value }));
+                                    dispatch({ type: 'SET_UNSAVED' });
+                                }}
+                                placeholder="?????"
+                                disabled={!chapterInfo.chapter}
+                            />
+                        </div>
+                        {diffReview && diffReview.hunks?.length > 0 && (
+                            <div className="mb-4 space-y-2">
+                                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2">
+                                    请先处理编辑修改建议，再继续手动编辑。
+                                </div>
+                                <InlineDiffEditor
+                                    originalContent={diffReview.originalContent || ''}
+                                    revisedContent={diffReview.revisedContent || ''}
+                                    hunks={diffReview.hunks}
+                                    stats={diffReview.stats}
+                                    onAccept={handleAcceptAllDiff}
+                                    onReject={handleRejectAllDiff}
+                                    className="border border-border bg-surface rounded-lg"
                                 />
-                            </motion.div>
+                                <div className="text-[11px] text-ink-400">
+                                    当前为内联 Diff 预览，接受/拒绝后将回到正文编辑。
+                                </div>
+                            </div>
                         )}
+
+                        {streamingState.active ? (
+                            <StreamingDraftView
+                                content={manualContent}
+                                progress={streamingState.progress}
+                                active={streamingState.active}
+                                className="flex-1"
+                            />
+                        ) : (
+                            <textarea
+                                className="flex-1 w-full resize-none border-none outline-none bg-transparent text-base font-serif text-ink-900 leading-relaxed focus:ring-0 placeholder:text-ink-300"
+                                value={manualContent}
+                                onChange={(e) => {
+                                    setManualContent(e.target.value);
+                                    dispatch({ type: 'SET_WORD_COUNT', payload: e.target.value.length });
+                                    dispatch({ type: 'SET_UNSAVED' });
+                                }}
+                                onSelect={(e) => {
+                                    const text = e.target.value.substring(0, e.target.selectionStart);
+                                    const lines = text.split('\n');
+                                    dispatch({
+                                        type: 'SET_CURSOR_POSITION',
+                                        payload: {
+                                            line: lines.length,
+                                            column: lines[lines.length - 1].length + 1
+                                        }
+                                    });
+                                }}
+                                placeholder="开始写作..."
+                                disabled={!chapterInfo.chapter || isGenerating || Boolean(diffReview)}
+                                spellCheck={false}
+                            />
+                        )}
+
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -843,10 +1145,36 @@ function WritingSessionContent({ isEmbedded = false }) {
     );
 
 
+    
+    const saveBusy = isSaving || analysisLoading || analysisSaving;
+    const showSaveAction = (chapterInfo.chapter || status === 'card_editing') && !isGenerating;
+    const saveAction = showSaveAction ? (
+        status === 'card_editing' ? (
+            <Button
+                onClick={handleCardSave}
+                disabled={isSaving}
+                className="shadow-sm"
+                size="sm"
+            >
+                {isSaving ? '\u4fdd\u5b58\u4e2d...' : '\u4fdd\u5b58'}
+            </Button>
+        ) : (
+            <SaveMenu
+                disabled={!chapterInfo.chapter || saveBusy}
+                busy={saveBusy}
+                onSaveOnly={handleManualSave}
+                onAnalyzeSave={handleAnalyzeAndSave}
+            />
+        )
+    ) : null;
+
     const titleBarProps = {
         projectName: project?.name,
+        rightActions: saveAction,
         // Show Card Name in Title if card editing
-        chapterTitle: status === 'card_editing' ? cardForm.name : (chapterInfo.chapter ? (chapterInfo.chapter_title || `第 ${chapterInfo.chapter} 章`) : null)
+        chapterTitle: status === 'card_editing'
+            ? cardForm.name
+            : (chapterInfo.chapter ? (chapterInfo.chapter_title || `Chapter ${chapterInfo.chapter}`) : null)
     };
 
     return (
@@ -855,42 +1183,6 @@ function WritingSessionContent({ isEmbedded = false }) {
                 {renderMainContent()}
             </div>
 
-            {/* Action Buttons - Moved to top right to avoid input area overlap */}
-            <div className="fixed top-20 right-10 z-20 flex gap-2">
-                {(chapterInfo.chapter) && (
-                    <Button
-                        onClick={() => setShowActivity(true)}
-                        variant="secondary"
-                        className="shadow-md bg-surface/90 backdrop-blur text-ink-900 border border-border hover:bg-ink-100"
-                        size="sm"
-                    >
-                        <Activity size={14} className="mr-2" />
-                        活跃度
-                    </Button>
-                )}
-
-                {(chapterInfo.chapter || status === 'card_editing') && !isGenerating && (
-                    <Button
-                        onClick={status === 'card_editing' ? handleCardSave : handleManualSave}
-                        disabled={isSaving}
-                        className="shadow-md"
-                        size="sm"
-                    >
-                        <Save size={14} className="mr-2" />
-                        {isSaving ? "保存中..." : "保存"}
-                    </Button>
-                )}
-            </div>
-
-            <AnimatePresence>
-                {showActivity && (
-                    <EntityActivityDashboard
-                        projectId={projectId}
-                        chapterId={chapterInfo.chapter}
-                        onClose={() => setShowActivity(false)}
-                    />
-                )}
-            </AnimatePresence>
 
             <ChapterCreateDialog
                 open={showChapterDialog}
@@ -904,30 +1196,23 @@ function WritingSessionContent({ isEmbedded = false }) {
                 defaultVolumeId={state.selectedVolumeId || 'V1'}
             />
 
-            {showSaveDialog && (
-                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
-                    <Card className="w-full max-w-md p-6 space-y-4 shadow-xl border-border bg-background relative">
-                        <Button variant="ghost" size="icon" className="absolute right-4 top-4 text-ink-400 hover:text-ink-600" onClick={() => setShowSaveDialog(false)}>
-                            <X size={16} />
-                        </Button>
-                        <div className="flex flex-col items-center justify-center space-y-2">
-                            <div className="rounded-full bg-green-100 p-3 text-green-600">
-                                <Check size={32} />
-                            </div>
-                            <h3 className="text-xl font-bold text-ink-900">保存成功</h3>
-                            <p className="text-center text-ink-500">
-                                章节内容已成功保存到云端。<br />
-                                事实和状态已更新。
-                            </p>
-                        </div>
-                        <div className="flex justify-center pt-2">
-                            <Button onClick={() => setShowSaveDialog(false)} className="w-full">
-                                知道了
-                            </Button>
-                        </div>
-                    </Card>
-                </div>
-            )}
+            <PreWritingQuestionsDialog
+                open={showPreWriteDialog}
+                questions={preWriteQuestions}
+                onConfirm={handlePreWriteConfirm}
+                onSkip={handlePreWriteSkip}
+            />
+
+            <AnalysisReviewDialog
+                open={analysisDialogOpen}
+                analyses={analysisItems}
+                onCancel={() => {
+                    setAnalysisDialogOpen(false);
+                    setAnalysisItems([]);
+                }}
+                onSave={handleSaveAnalysis}
+                saving={analysisSaving}
+            />
 
             {isGenerating && (
                 <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-full shadow-lg animate-pulse">

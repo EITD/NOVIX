@@ -21,9 +21,6 @@ class UnifiedStorageAdapter:
     async def get_style_card(self, project_id: str) -> Optional[Dict]:
         return await self.card.get_style_card(project_id)
         
-    async def get_rules_card(self, project_id: str) -> Optional[Dict]:
-        return await self.card.get_rules_card(project_id)
-        
     async def list_character_cards(self, project_id: str) -> List[str]:
         return await self.card.list_character_cards(project_id)
         

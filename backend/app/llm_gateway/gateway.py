@@ -16,7 +16,6 @@ from app.llm_gateway.providers import (
     OpenAIProvider,
     AnthropicProvider,
     DeepSeekProvider,
-    MockProvider,
     CustomProvider,
     QwenProvider,
     KimiProvider,
@@ -52,10 +51,7 @@ class LLMGateway:
     def _init_profiles(self) -> None:
         """Initialize LLM providers from stored profiles"""
         self.providers = {}
-        
-        # Always register Mock provider (no key needed)
-        self.providers["mock"] = MockProvider()
-        
+
         profiles = llm_config_service.get_profiles()
         for profile in profiles:
             try:
@@ -69,11 +65,7 @@ class LLMGateway:
         provider_type = profile.get("provider")
         api_key = profile.get("api_key")
         
-        # Mock handled separately, but if listed in profiles:
-        if provider_type == "mock":
-            return MockProvider()
-
-        if not api_key and provider_type != "mock":
+        if not api_key:
              # Some custom local LLMS might not need key, but generally we expect one or at least safe instantiation
              pass
 
@@ -184,11 +176,6 @@ class LLMGateway:
                     target_provider = p
                     break
              
-            if not target_provider and "mock" in self.providers:
-                # Last resort fallback to mock if available/debug?
-                # For now raise error
-                pass
-
         if not target_provider:
              raise ValueError(f"Profile/Provider '{provider}' not found.")
         
@@ -296,16 +283,14 @@ class LLMGateway:
         """
         assignments = llm_config_service.get_assignments()
         profile_id = assignments.get(agent_name)
-        
-        if profile_id and profile_id in self.providers:
-            return profile_id
-            
-        # Fallback if assignment is invalid or empty
-        # Return first available profile?
-        if self.providers:
-            return list(self.providers.keys())[0]
-            
-        return "mock" # Absolute fallback
+
+        if not profile_id:
+            raise ValueError(f"No LLM profile assigned for agent '{agent_name}'.")
+
+        if profile_id not in self.providers:
+            raise ValueError(f"Assigned LLM profile '{profile_id}' not loaded for agent '{agent_name}'.")
+
+        return profile_id
     
     def get_temperature_for_agent(self, agent_name: str) -> float:
         """

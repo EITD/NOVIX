@@ -4,12 +4,19 @@ Generates draft based on scene brief.
 """
 
 from typing import Any, Dict, List
+import json
 
 from app.agents.base import BaseAgent
 
 
 class WriterAgent(BaseAgent):
     """Agent responsible for generating drafts."""
+
+    DEFAULT_QUESTIONS = [
+        {"type": "plot_point", "text": "本章是否有必须发生的关键事件或转折？"},
+        {"type": "character_change", "text": "主要角色在本章需要呈现怎样的情感变化或关系推进？"},
+        {"type": "style_focus", "text": "本章应重点强化怎样的氛围或叙事节奏？"},
+    ]
 
     def get_agent_name(self) -> str:
         return "writer"
@@ -49,26 +56,28 @@ class WriterAgent(BaseAgent):
             previous_summaries = await self._load_previous_summaries(project_id, chapter)
 
         style_card = context.get("style_card")
-        rules_card = context.get("rules_card")
         character_cards = context.get("character_cards") or []
         world_cards = context.get("world_cards") or []
         facts = context.get("facts") or []
         timeline = context.get("timeline") or []
         character_states = context.get("character_states") or []
         chapter_goal = context.get("chapter_goal")
+        user_answers = context.get("user_answers") or []
+        user_feedback = context.get("user_feedback") or ""
 
         draft_content = await self._generate_draft(
             scene_brief=scene_brief,
             target_word_count=context.get("target_word_count", 3000),
             previous_summaries=previous_summaries,
             style_card=style_card,
-            rules_card=rules_card,
             character_cards=character_cards,
             world_cards=world_cards,
             facts=facts,
             timeline=timeline,
             character_states=character_states,
             chapter_goal=chapter_goal,
+            user_answers=user_answers,
+            user_feedback=user_feedback,
         )
 
         pending_confirmations = self._extract_confirmations(draft_content)
@@ -90,13 +99,13 @@ class WriterAgent(BaseAgent):
             "pending_confirmations": pending_confirmations,
         }
 
-    async def execute_stream(self, project_id: str, chapter: str, context: Dict[str, Any]):
-        """Stream draft generation token by token."""
-        scene_brief = context.get("scene_brief")
-        if not scene_brief:
-            yield "[Error: Scene brief not found]"
-            return
-
+    async def generate_questions(
+        self,
+        context_package: Dict[str, Any],
+        scene_brief: Any,
+        chapter_goal: str
+    ) -> List[Dict[str, str]]:
+        """Generate pre-writing questions for user confirmation."""
         def get_field(obj, field, default=""):
             if hasattr(obj, field):
                 return getattr(obj, field, default)
@@ -104,46 +113,118 @@ class WriterAgent(BaseAgent):
                 return obj.get(field, default)
             return default
 
-        brief_chapter = get_field(scene_brief, "chapter", chapter)
-        brief_title = get_field(scene_brief, "title", "Untitled")
+        brief_chapter = get_field(scene_brief, "chapter", "")
+        brief_title = get_field(scene_brief, "title", "")
         brief_goal = get_field(scene_brief, "goal", "")
         brief_characters = get_field(scene_brief, "characters", [])
 
-        context_items = []
-        chapter_goal = context.get("chapter_goal")
-        if chapter_goal:
-            context_items.append(f"GOAL: {chapter_goal}")
-
-        char_names = []
+        characters_text = []
         for char in brief_characters or []:
             if isinstance(char, dict):
-                char_names.append(char.get("name", str(char)))
+                characters_text.append(char.get("name", str(char)))
             elif hasattr(char, "name"):
-                char_names.append(char.name)
+                characters_text.append(char.name)
             else:
-                char_names.append(str(char))
+                characters_text.append(str(char))
 
-        context_items.append(
-            """Scene Brief:
-Chapter: {chapter}
-Title: {title}
-Goal: {goal}
-Characters: {characters}
-""".format(
-                chapter=brief_chapter,
-                title=brief_title,
-                goal=brief_goal,
-                characters=", ".join(char_names) if char_names else "None",
-            )
+        context_items = [
+            f"Chapter: {brief_chapter}",
+            f"Title: {brief_title}",
+            f"Goal: {brief_goal or chapter_goal}",
+            f"Characters: {', '.join(characters_text) if characters_text else 'None'}",
+        ]
+
+        if context_package:
+            context_items.append("Context Package Summary:")
+            for key in ["summary_with_events", "summary_only", "title_only", "volume_summaries"]:
+                items = context_package.get(key, []) or []
+                if items:
+                    context_items.append(f"- {key}: {len(items)} items")
+
+        system_prompt = (
+            "You are a Writer preparing to draft a novel chapter. "
+            "Ask the user 3 concise questions to clarify writing intent before drafting."
         )
 
-        if context.get("style_card"):
-            context_items.append(f"Style: {context.get('style_card')}")
+        user_prompt = (
+            "Return ONLY a JSON array with exactly 3 items. "
+            "Each item must have {\"type\": \"...\", \"text\": \"...\"}. "
+            "Types must be: plot_point, character_change, style_focus. "
+            "Text must be Chinese, short, and directly answerable."
+        )
 
         messages = self.build_messages(
-            system_prompt=self.get_system_prompt(),
-            user_prompt=f"Write a {context.get('target_word_count', 3000)} word draft for this chapter.",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             context_items=context_items,
+        )
+
+        try:
+            raw = await self.call_llm(messages)
+            data = json.loads(raw.strip())
+            if isinstance(data, list) and len(data) == 3:
+                cleaned = []
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    q_type = item.get("type")
+                    text = item.get("text")
+                    if q_type and text:
+                        cleaned.append({"type": q_type, "text": text})
+                if len(cleaned) == 3:
+                    return cleaned
+        except Exception:
+            pass
+
+        return list(self.DEFAULT_QUESTIONS)
+
+    async def execute_stream(self, project_id: str, chapter: str, context: Dict[str, Any]):
+        """Stream draft generation token by token."""
+        scene_brief = context.get("scene_brief")
+        if not scene_brief:
+            yield "[Error: Scene brief not found]"
+            return
+
+        messages = self._build_draft_messages(
+            scene_brief=scene_brief,
+            target_word_count=context.get("target_word_count", 3000),
+            previous_summaries=context.get("previous_summaries"),
+            style_card=context.get("style_card"),
+            character_cards=context.get("character_cards") or [],
+            world_cards=context.get("world_cards") or [],
+            facts=context.get("facts") or [],
+            timeline=context.get("timeline") or [],
+            character_states=context.get("character_states") or [],
+            chapter_goal=context.get("chapter_goal"),
+            user_answers=context.get("user_answers") or [],
+            user_feedback=context.get("user_feedback") or "",
+            include_plan=False,
+        )
+
+        async for chunk in self.call_llm_stream(messages):
+            yield chunk
+
+    async def execute_stream_draft(self, project_id: str, chapter: str, context: Dict[str, Any]):
+        """Stream draft text only (no plan tags)."""
+        scene_brief = context.get("scene_brief")
+        if not scene_brief:
+            yield "[Error: Scene brief not found]"
+            return
+
+        messages = self._build_draft_messages(
+            scene_brief=scene_brief,
+            target_word_count=context.get("target_word_count", 3000),
+            previous_summaries=context.get("previous_summaries"),
+            style_card=context.get("style_card"),
+            character_cards=context.get("character_cards") or [],
+            world_cards=context.get("world_cards") or [],
+            facts=context.get("facts") or [],
+            timeline=context.get("timeline") or [],
+            character_states=context.get("character_states") or [],
+            chapter_goal=context.get("chapter_goal"),
+            user_answers=context.get("user_answers") or [],
+            user_feedback=context.get("user_feedback") or "",
+            include_plan=False,
         )
 
         async for chunk in self.call_llm_stream(messages):
@@ -192,15 +273,59 @@ Characters: {characters}
         target_word_count: int,
         previous_summaries: List[str],
         style_card: Any = None,
-        rules_card: Any = None,
         character_cards: List[Any] = None,
         world_cards: List[Any] = None,
         facts: List[Any] = None,
         timeline: List[Any] = None,
         character_states: List[Any] = None,
         chapter_goal: str = None,
+        user_answers: List[Dict[str, str]] = None,
+        user_feedback: str = None,
     ) -> str:
         """Generate draft using LLM."""
+        messages = self._build_draft_messages(
+            scene_brief=scene_brief,
+            target_word_count=target_word_count,
+            previous_summaries=previous_summaries,
+            style_card=style_card,
+            character_cards=character_cards,
+            world_cards=world_cards,
+            facts=facts,
+            timeline=timeline,
+            character_states=character_states,
+            chapter_goal=chapter_goal,
+            user_answers=user_answers,
+            user_feedback=user_feedback,
+            include_plan=True,
+        )
+
+        raw_response = await self.call_llm(messages)
+        draft_content = raw_response
+        if "<draft>" in raw_response:
+            start = raw_response.find("<draft>") + 7
+            end = raw_response.find("</draft>")
+            if end == -1:
+                end = len(raw_response)
+            draft_content = raw_response[start:end].strip()
+
+        return draft_content
+
+    def _build_draft_messages(
+        self,
+        scene_brief: Any,
+        target_word_count: int,
+        previous_summaries: List[str],
+        style_card: Any = None,
+        character_cards: List[Any] = None,
+        world_cards: List[Any] = None,
+        facts: List[Any] = None,
+        timeline: List[Any] = None,
+        character_states: List[Any] = None,
+        chapter_goal: str = None,
+        user_answers: List[Dict[str, str]] = None,
+        user_feedback: str = None,
+        include_plan: bool = True,
+    ) -> List[Dict[str, str]]:
         context_items = []
 
         def get_field(obj, field, default=""):
@@ -252,11 +377,6 @@ FORBIDDEN:
             except Exception:
                 context_items.append("Style Card:\n" + str(style_card))
 
-        if rules_card:
-            try:
-                context_items.append("Rules Card:\n" + str(rules_card.model_dump()))
-            except Exception:
-                context_items.append("Rules Card:\n" + str(rules_card))
 
         if character_cards:
             lines = ["Character Cards:"]
@@ -303,10 +423,26 @@ FORBIDDEN:
                     lines.append(str(state))
             context_items.append("\n".join(lines))
 
+        if user_answers:
+            lines = ["User Answers:"]
+            for answer in user_answers:
+                if not isinstance(answer, dict):
+                    continue
+                question = answer.get("question") or answer.get("text") or answer.get("type") or ""
+                reply = answer.get("answer") or ""
+                if question or reply:
+                    lines.append(f"- {question}: {reply}")
+            if len(lines) > 1:
+                context_items.append("\n".join(lines))
+
+        if user_feedback:
+            context_items.append("User Feedback:\n" + str(user_feedback))
+
         if previous_summaries:
             context_items.append("Previous Chapters:\n" + "\n\n".join(previous_summaries))
 
-        user_prompt = f"""Write a draft for this chapter.
+        if include_plan:
+            user_prompt = f"""Write a draft for this chapter.
 
 Chapter goal (top priority): {chapter_goal or brief_goal}
 
@@ -324,23 +460,32 @@ Output format:
 (Your narrative prose here)
 </draft>
 """
+            system_prompt = self.get_system_prompt()
+        else:
+            user_prompt = f"""Write the narrative draft for this chapter.
 
-        messages = self.build_messages(
-            system_prompt=self.get_system_prompt(),
+Chapter goal (top priority): {chapter_goal or brief_goal}
+
+Requirements:
+- Target word count: approximately {target_word_count} words
+- Follow the style reminder strictly
+- Respect all constraints and forbidden actions
+- DO NOT invent new settings without marking them [TO_CONFIRM: detail]
+
+Output format:
+- Output ONLY the narrative prose.
+- Do NOT include <plan> tags or any extra headers.
+"""
+            system_prompt = (
+                "You are a Writer agent for novel writing.\n"
+                "Write the narrative draft only. Do not output any plan tags or headers."
+            )
+
+        return self.build_messages(
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
             context_items=context_items,
         )
-
-        raw_response = await self.call_llm(messages)
-        draft_content = raw_response
-        if "<draft>" in raw_response:
-            start = raw_response.find("<draft>") + 7
-            end = raw_response.find("</draft>")
-            if end == -1:
-                end = len(raw_response)
-            draft_content = raw_response[start:end].strip()
-
-        return draft_content
 
     def _format_characters(self, characters: List[Dict]) -> str:
         if not characters:

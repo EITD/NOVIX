@@ -15,14 +15,12 @@ import { AlertTriangle, CheckCircle2, AlertOctagon, Activity, BarChart2, PieChar
 const AGENT_NAMES = {
     archivist: '档案员',
     writer: '撰稿人',
-    reviewer: '审核员',
     editor: '编辑'
 };
 
 const AGENT_COLORS = {
     archivist: 'bg-purple-500',
     writer: 'bg-blue-500',
-    reviewer: 'bg-amber-500',
     editor: 'bg-emerald-500'
 };
 
@@ -95,7 +93,6 @@ const ContextMonitor = ({
         const costs = {
             archivist: { input: 0, output: 0 },
             writer: { input: 0, output: 0 },
-            reviewer: { input: 0, output: 0 },
             editor: { input: 0, output: 0 }
         };
 

@@ -5,7 +5,7 @@ Draft and Writing Session Data Models / 草稿与写作会话数据模型
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class SceneBrief(BaseModel):
@@ -25,6 +25,10 @@ class SceneBrief(BaseModel):
     world_constraints: List[str] = Field(
         default_factory=list,
         description="World constraints / 世界观约束",
+    )
+    facts: List[str] = Field(
+        default_factory=list,
+        description="Relevant facts",
     )
     style_reminder: str = Field(..., description="Style reminder / 文风提醒")
     forbidden: List[str] = Field(
@@ -104,18 +108,14 @@ class ChapterSummary(BaseModel):
 
 
 class CardProposal(BaseModel):
-    """Proposal for a new setting card / 新设定卡提案"""
+    """Proposal for a new setting card."""
 
-    name: str = Field(..., description="Entity name / 实体名称")
-    type: str = Field(..., description="Type: Character, World, Rule / 类型")
-    description: str = Field(..., description="Proposed content / 提案内容")
-    rationale: str = Field(..., description="Why is this important / 重要性说明")
-    source_text: str = Field(default="", description="Quote from source text / 原文引用")
-    confidence: float = Field(default=0.8, description="Confidence score 0.0-1.0 / 置信度")
+    model_config = ConfigDict(extra="ignore")
 
-    # Detailed fields for Character
-    personality: List[str] = Field(default_factory=list, description="Personality traits / 性格特征")
-    appearance: str = Field(default="", description="Physical appearance / 外貌特征")
-    background: str = Field(default="", description="Background story / 背景故事")
-    abilities: str = Field(default="", description="Abilities/Skills / 能力技能")
-    relationships: List[Dict[str, str]] = Field(default_factory=list, description="Relationships / 人际关系")
+
+    name: str = Field(..., description="Entity name")
+    type: str = Field(..., description="Type: Character or World")
+    description: str = Field(..., description="Proposed content")
+    rationale: str = Field(..., description="Why this card is important")
+    source_text: str = Field(default="", description="Quote from source text")
+    confidence: float = Field(default=0.8, description="Confidence score 0.0-1.0")

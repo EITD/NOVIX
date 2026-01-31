@@ -49,7 +49,6 @@ class Settings(BaseSettings):
 
     novix_agent_archivist_provider: str = os.getenv("NOVIX_AGENT_ARCHIVIST_PROVIDER", "")
     novix_agent_writer_provider: str = os.getenv("NOVIX_AGENT_WRITER_PROVIDER", "")
-    novix_agent_reviewer_provider: str = os.getenv("NOVIX_AGENT_REVIEWER_PROVIDER", "")
     novix_agent_editor_provider: str = os.getenv("NOVIX_AGENT_EDITOR_PROVIDER", "")
     
     # Storage Configuration / 存储路径配置

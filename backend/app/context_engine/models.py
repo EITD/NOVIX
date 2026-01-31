@@ -33,7 +33,6 @@ class ContextType(str, Enum):
     TASK_INSTRUCTION = "task_instruction"
     OUTPUT_SCHEMA = "output_schema"
     STYLE_CARD = "style_card"
-    RULES_CARD = "rules_card"
     
     # 信息性上下文 / Informational Context
     CHARACTER_CARD = "character_card"

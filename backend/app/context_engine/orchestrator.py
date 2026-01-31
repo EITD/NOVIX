@@ -79,7 +79,6 @@ class ContextOrchestrator:
         guiding_context = guiding_builder.build(
             task_type=task.get("type", ""),
             style_card=task.get("style_card"),
-            rules_card=task.get("rules_card")
         )
         guiding_tokens = estimate_tokens(guiding_context)
         

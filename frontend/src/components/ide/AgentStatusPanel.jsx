@@ -101,7 +101,8 @@ const AgentCard = ({
 const MessageItem = ({ type, content, time }) => {
     const styles = {
         user: 'bg-primary text-white ml-8',
-        system: 'bg-ink-100 text-ink-700 mr-8',
+        assistant: 'bg-ink-100 text-ink-700 mr-8',
+        system: 'bg-amber-50 text-amber-700 border border-amber-100 mr-8',
         error: 'bg-red-50 text-red-700 border border-red-200 mr-8',
     };
 

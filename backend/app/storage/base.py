@@ -97,6 +97,20 @@ class BaseStorage:
         
         async with aiofiles.open(file_path, 'a', encoding=self.encoding) as f:
             await f.write(json.dumps(item, ensure_ascii=False) + '\n')
+
+    async def write_jsonl(self, file_path: Path, items: list) -> None:
+        """
+        Write JSONL file / 鍐欏叆 JSONL 鏂囦欢
+
+        Args:
+            file_path: Path to JSONL file / JSONL 鏂囦欢璺緞
+            items: Items to write / 瑕佸啓鍏ョ殑鏉＄洰鍒楄〃
+        """
+        self.ensure_dir(file_path.parent)
+
+        async with aiofiles.open(file_path, 'w', encoding=self.encoding) as f:
+            for item in items:
+                await f.write(json.dumps(item, ensure_ascii=False) + '\n')
     
     async def read_text(self, file_path: Path) -> str:
         """

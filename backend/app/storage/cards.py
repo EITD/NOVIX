@@ -1,267 +1,187 @@
-"""
-Card Storage / 卡片存储
-Manage character cards, world cards, style cards, and rules cards
-管理角色卡、世界观卡、文风卡和规则卡
+﻿"""
+Card storage.
 """
 
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+
 from app.storage.base import BaseStorage
-from app.schemas.card import CharacterCard, WorldCard, StyleCard, RulesCard
+from app.schemas.card import CharacterCard, WorldCard, StyleCard
 
 
 class CardStorage(BaseStorage):
-    """Storage operations for cards / 卡片存储操作"""
-    
+    """Storage operations for cards."""
+
     async def get_character_card(
         self,
         project_id: str,
-        character_name: str
+        character_name: str,
     ) -> Optional[CharacterCard]:
-        """
-        Get a character card / 获取角色卡
-        
-        Args:
-            project_id: Project ID / 项目ID
-            character_name: Character name / 角色名称
-            
-        Returns:
-            Character card or None / 角色卡或None
-        """
         file_path = (
-            self.get_project_path(project_id) /
-            "cards" / "characters" / f"{character_name}.yaml"
+            self.get_project_path(project_id)
+            / "cards"
+            / "characters"
+            / f"{character_name}.yaml"
         )
-        
+
         if not file_path.exists():
             return None
-        
+
         data = await self.read_yaml(file_path)
-        return CharacterCard(**data)
-    
-    async def save_character_card(
-        self,
-        project_id: str,
-        card: CharacterCard
-    ) -> None:
-        """
-        Save a character card / 保存角色卡
-        
-        Args:
-            project_id: Project ID / 项目ID
-            card: Character card / 角色卡
-        """
+        coerced = self._coerce_character_data(data)
+        return CharacterCard(**coerced)
+
+    async def save_character_card(self, project_id: str, card: CharacterCard) -> None:
         file_path = (
-            self.get_project_path(project_id) /
-            "cards" / "characters" / f"{card.name}.yaml"
+            self.get_project_path(project_id)
+            / "cards"
+            / "characters"
+            / f"{card.name}.yaml"
         )
-        
+
         await self.write_yaml(file_path, card.model_dump())
-    
+
     async def list_character_cards(self, project_id: str) -> List[str]:
-        """
-        List all character card names / 列出所有角色卡名称
-        
-        Args:
-            project_id: Project ID / 项目ID
-            
-        Returns:
-            List of character names / 角色名称列表
-        """
-        cards_dir = (
-            self.get_project_path(project_id) /
-            "cards" / "characters"
-        )
-        
+        cards_dir = self.get_project_path(project_id) / "cards" / "characters"
         if not cards_dir.exists():
             return []
-        
-        return [
-            f.stem for f in cards_dir.glob("*.yaml")
-        ]
-    
-    async def delete_character_card(
-        self,
-        project_id: str,
-        character_name: str
-    ) -> bool:
-        """
-        Delete a character card / 删除角色卡
-        
-        Args:
-            project_id: Project ID / 项目ID
-            character_name: Character name / 角色名称
-            
-        Returns:
-            True if deleted, False if not found / 是否删除成功
-        """
+
+        return [f.stem for f in cards_dir.glob("*.yaml")]
+
+    async def delete_character_card(self, project_id: str, character_name: str) -> bool:
         file_path = (
-            self.get_project_path(project_id) /
-            "cards" / "characters" / f"{character_name}.yaml"
+            self.get_project_path(project_id)
+            / "cards"
+            / "characters"
+            / f"{character_name}.yaml"
         )
-        
+
         if file_path.exists():
             file_path.unlink()
             return True
         return False
-    
-    async def get_world_card(
-        self,
-        project_id: str,
-        card_name: str
-    ) -> Optional[WorldCard]:
-        """
-        Get a world card / 获取世界观卡
-        
-        Args:
-            project_id: Project ID / 项目ID
-            card_name: Card name / 卡片名称
-            
-        Returns:
-            World card or None / 世界观卡或None
-        """
-        file_path = (
-            self.get_project_path(project_id) /
-            "cards" / "world" / f"{card_name}.yaml"
-        )
-        
+
+    async def get_world_card(self, project_id: str, card_name: str) -> Optional[WorldCard]:
+        file_path = self.get_project_path(project_id) / "cards" / "world" / f"{card_name}.yaml"
         if not file_path.exists():
             return None
-        
+
         data = await self.read_yaml(file_path)
-        return WorldCard(**data)
-    
-    async def save_world_card(
-        self,
-        project_id: str,
-        card: WorldCard
-    ) -> None:
-        """
-        Save a world card / 保存世界观卡
-        
-        Args:
-            project_id: Project ID / 项目ID
-            card: World card / 世界观卡
-        """
-        file_path = (
-            self.get_project_path(project_id) /
-            "cards" / "world" / f"{card.name}.yaml"
-        )
-        
+        coerced = self._coerce_world_data(data)
+        return WorldCard(**coerced)
+
+    async def save_world_card(self, project_id: str, card: WorldCard) -> None:
+        file_path = self.get_project_path(project_id) / "cards" / "world" / f"{card.name}.yaml"
         await self.write_yaml(file_path, card.model_dump())
-    
+
     async def list_world_cards(self, project_id: str) -> List[str]:
-        """
-        List all world card names / 列出所有世界观卡名称
-        
-        Args:
-            project_id: Project ID / 项目ID
-            
-        Returns:
-            List of card names / 卡片名称列表
-        """
-        cards_dir = (
-            self.get_project_path(project_id) /
-            "cards" / "world"
-        )
-        
+        cards_dir = self.get_project_path(project_id) / "cards" / "world"
         if not cards_dir.exists():
             return []
-        
         return [f.stem for f in cards_dir.glob("*.yaml")]
-    
+
     async def get_style_card(self, project_id: str) -> Optional[StyleCard]:
-        """
-        Get style card / 获取文风卡
-        
-        Args:
-            project_id: Project ID / 项目ID
-            
-        Returns:
-            Style card or None / 文风卡或None
-        """
-        file_path = (
-            self.get_project_path(project_id) /
-            "cards" / "style.yaml"
-        )
-        
+        file_path = self.get_project_path(project_id) / "cards" / "style.yaml"
         if not file_path.exists():
             return None
-        
+
         data = await self.read_yaml(file_path)
-        if "content" in data and (
-            "narrative_distance" not in data
-            or "pacing" not in data
-            or "sentence_structure" not in data
-        ):
-            content = str(data.get("content", "") or "").strip()
-            return StyleCard(
-                narrative_distance="未设置",
-                pacing="未设置",
-                sentence_structure="未设置",
-                example_passages=[content] if content else [],
-            )
-        return StyleCard(**data)
-    
-    async def save_style_card(
-        self,
-        project_id: str,
-        card: StyleCard
-    ) -> None:
-        """
-        Save style card / 保存文风卡
-        
-        Args:
-            project_id: Project ID / 项目ID
-            card: Style card / 文风卡
-        """
-        file_path = (
-            self.get_project_path(project_id) /
-            "cards" / "style.yaml"
-        )
-        
-        await self.write_yaml(file_path, card.model_dump())
-    
-    async def get_rules_card(self, project_id: str) -> Optional[RulesCard]:
-        """
-        Get rules card / 获取规则卡
-        
-        Args:
-            project_id: Project ID / 项目ID
-            
-        Returns:
-            Rules card or None / 规则卡或None
-        """
-        file_path = (
-            self.get_project_path(project_id) /
-            "cards" / "rules.yaml"
-        )
-        
-        if not file_path.exists():
-            return None
-        
-        data = await self.read_yaml(file_path)
-        return RulesCard(**data)
-    
-    async def save_rules_card(
-        self,
-        project_id: str,
-        card: RulesCard
-    ) -> None:
-        """
-        Save rules card / 保存规则卡
-        
-        Args:
-            project_id: Project ID / 项目ID
-            card: Rules card / 规则卡
-        """
-        file_path = (
-            self.get_project_path(project_id) /
-            "cards" / "rules.yaml"
-        )
-        
+        coerced = self._coerce_style_data(data)
+        return StyleCard(**coerced)
+
+    async def save_style_card(self, project_id: str, card: StyleCard) -> None:
+        file_path = self.get_project_path(project_id) / "cards" / "style.yaml"
         await self.write_yaml(file_path, card.model_dump())
 
+    def _coerce_character_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        name = str(data.get("name", "")).strip()
+        description = str(data.get("description", "")).strip()
+        if description:
+            return {"name": name, "description": description}
 
-# Global instance
+        parts = []
+        identity = str(data.get("identity", "")).strip()
+        if identity:
+            parts.append(f"身份: {identity}")
+        appearance = str(data.get("appearance", "")).strip()
+        if appearance:
+            parts.append(f"外貌: {appearance}")
+        motivation = str(data.get("motivation", "")).strip()
+        if motivation:
+            parts.append(f"动机: {motivation}")
+        personality = data.get("personality") or []
+        if isinstance(personality, list) and personality:
+            parts.append(f"性格: {', '.join([str(item) for item in personality if item])}")
+        speech_pattern = str(data.get("speech_pattern", "")).strip()
+        if speech_pattern:
+            parts.append(f"口吻: {speech_pattern}")
+        relationships = data.get("relationships") or []
+        if isinstance(relationships, list) and relationships:
+            rel_parts = []
+            for item in relationships:
+                target = str(item.get("target", "")).strip() if isinstance(item, dict) else ""
+                relation = str(item.get("relation", "")).strip() if isinstance(item, dict) else ""
+                if target or relation:
+                    rel_parts.append(f"{target}({relation})".strip())
+            if rel_parts:
+                parts.append(f"关系: {', '.join(rel_parts)}")
+        boundaries = data.get("boundaries") or []
+        if isinstance(boundaries, list) and boundaries:
+            parts.append(f"边界: {', '.join([str(item) for item in boundaries if item])}")
+        arc = str(data.get("arc", "")).strip()
+        if arc:
+            parts.append(f"角色弧线: {arc}")
+
+        return {"name": name, "description": "\n".join(parts).strip()}
+
+    def _coerce_world_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        name = str(data.get("name", "")).strip()
+        description = str(data.get("description", "")).strip()
+        if description and "category" not in data and "rules" not in data and "immutable" not in data:
+            return {"name": name, "description": description}
+
+        parts = []
+        if description:
+            parts.append(description)
+        category = str(data.get("category", "")).strip()
+        if category:
+            parts.append(f"类型: {category}")
+        rules = data.get("rules") or []
+        if isinstance(rules, list) and rules:
+            parts.append(f"规则: {', '.join([str(item) for item in rules if item])}")
+        immutable = data.get("immutable")
+        if isinstance(immutable, bool):
+            parts.append("不可变: 是" if immutable else "不可变: 否")
+
+        return {"name": name, "description": "\n".join([item for item in parts if item]).strip()}
+
+    def _coerce_style_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        style = str(data.get("style", "")).strip()
+        if style:
+            return {"style": style}
+
+        content = str(data.get("content", "")).strip()
+        if content:
+            return {"style": content}
+
+        parts = []
+        narrative_distance = str(data.get("narrative_distance", "")).strip()
+        if narrative_distance:
+            parts.append(f"叙事距离: {narrative_distance}")
+        pacing = str(data.get("pacing", "")).strip()
+        if pacing:
+            parts.append(f"节奏: {pacing}")
+        sentence_structure = str(data.get("sentence_structure", "")).strip()
+        if sentence_structure:
+            parts.append(f"句式: {sentence_structure}")
+        vocab = data.get("vocabulary_constraints") or []
+        if isinstance(vocab, list) and vocab:
+            parts.append(f"用词: {', '.join([str(item) for item in vocab if item])}")
+        examples = data.get("example_passages") or []
+        if isinstance(examples, list) and examples:
+            parts.append("参考片段:\n" + "\n---\n".join([str(item) for item in examples if item]))
+
+        return {"style": "\n".join([item for item in parts if item]).strip()}
+
+
 cards_storage = CardStorage()

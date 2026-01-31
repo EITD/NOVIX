@@ -31,10 +31,7 @@ export const cardsAPI = {
   // Style cards
   getStyle: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/cards/style`),
   updateStyle: (projectId, data) => axios.put(`${API_BASE}/projects/${projectId}/cards/style`, data),
-
-  // Rules card (legacy - single card per project)
-  getRules: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/cards/rules`),
-  updateRules: (projectId, data) => axios.put(`${API_BASE}/projects/${projectId}/cards/rules`, data),
+  extractStyle: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/cards/style/extract`, data),
 };
 
 // Session API
@@ -42,8 +39,13 @@ export const sessionAPI = {
   start: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/start`, data),
   getStatus: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/session/status`),
   submitFeedback: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/feedback`, data),
+  answerQuestions: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/answer-questions`, data),
   cancel: (projectId) => axios.post(`${API_BASE}/projects/${projectId}/session/cancel`),
   analyze: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/analyze`, data),
+  saveAnalysis: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/save-analysis`, data),
+  analyzeSync: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/analyze-sync`, data),
+  analyzeBatch: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/analyze-batch`, data),
+  saveAnalysisBatch: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/save-analysis-batch`, data),
 };
 
 // Drafts API
@@ -56,9 +58,9 @@ export const draftsAPI = {
   listVersions: (projectId, chapter) => axios.get(`${API_BASE}/projects/${projectId}/drafts/${chapter}/versions`),
   getDraft: (projectId, chapter, version) => axios.get(`${API_BASE}/projects/${projectId}/drafts/${chapter}/${version}`),
   getSceneBrief: (projectId, chapter) => axios.get(`${API_BASE}/projects/${projectId}/drafts/${chapter}/scene-brief`),
-  getReview: (projectId, chapter) => axios.get(`${API_BASE}/projects/${projectId}/drafts/${chapter}/review`),
   getFinal: (projectId, chapter) => axios.get(`${API_BASE}/projects/${projectId}/drafts/${chapter}/final`),
   getSummary: (projectId, chapter) => axios.get(`${API_BASE}/projects/${projectId}/drafts/${chapter}/summary`),
+  saveSummary: (projectId, chapter, data) => axios.post(`${API_BASE}/projects/${projectId}/drafts/${chapter}/summary`, data),
   deleteChapter: (projectId, chapter) => axios.delete(`${API_BASE}/projects/${projectId}/drafts/${chapter}`),
   updateContent: (projectId, chapter, data) => axios.put(`${API_BASE}/projects/${projectId}/drafts/${chapter}/content`, data),
 };
@@ -77,11 +79,11 @@ export const volumesAPI = {
 
 // Canon API (Facts)
 export const canonAPI = {
-  list: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/canon`),
-  get: (projectId, factId) => axios.get(`${API_BASE}/projects/${projectId}/canon/${factId}`),
-  create: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/canon`, data),
-  update: (projectId, factId, data) => axios.put(`${API_BASE}/projects/${projectId}/canon/${factId}`, data),
-  delete: (projectId, factId) => axios.delete(`${API_BASE}/projects/${projectId}/canon/${factId}`),
+  list: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/canon/facts`),
+  get: (projectId, factId) => axios.get(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}`),
+  create: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/canon/facts`, data),
+  update: (projectId, factId, data) => axios.put(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}`, data),
+  delete: (projectId, factId) => axios.delete(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}`),
   getTree: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/facts/tree`),
 };
 
@@ -99,39 +101,91 @@ export const configAPI = {
 };
 
 // WebSocket for real-time updates
-export const createWebSocket = (projectId, onMessage) => {
+export const createWebSocket = (projectId, onMessage, options = {}) => {
   const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
   const wsHost = window.location.host;
-  const ws = new WebSocket(`${wsProtocol}://${wsHost}/ws/${projectId}/session`);
-  let heartbeatTimer = null;
 
-  ws.onopen = () => {
-    console.log('WebSocket connected');
+  const {
+    onStatus,
+    maxRetries = 6,
+    retryDelay = 800,
+    maxDelay = 8000,
+    heartbeatInterval = 20000
+  } = options;
+
+  let ws = null;
+  let heartbeatTimer = null;
+  let reconnectTimer = null;
+  let shouldReconnect = true;
+  let retryCount = 0;
+
+  const notifyStatus = (status) => {
+    onStatus?.(status);
+  };
+
+  const startHeartbeat = () => {
+    if (heartbeatTimer) return;
     heartbeatTimer = window.setInterval(() => {
       try {
-        ws.send(String(Date.now()));
+        ws?.send(String(Date.now()));
       } catch {
         // ignore
       }
-    }, 20000);
+    }, heartbeatInterval);
   };
 
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    onMessage(data);
-  };
-
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error);
-  };
-
-  ws.onclose = () => {
-    console.log('WebSocket disconnected');
+  const stopHeartbeat = () => {
     if (heartbeatTimer) {
       window.clearInterval(heartbeatTimer);
       heartbeatTimer = null;
     }
   };
 
-  return ws;
+  const connect = () => {
+    notifyStatus(retryCount > 0 ? 'reconnecting' : 'connecting');
+    ws = new WebSocket(`${wsProtocol}://${wsHost}/ws/${projectId}/session`);
+
+    ws.onopen = () => {
+      retryCount = 0;
+      notifyStatus('connected');
+      startHeartbeat();
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      onMessage(data);
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    ws.onclose = () => {
+      stopHeartbeat();
+      if (shouldReconnect && retryCount < maxRetries) {
+        const delay = Math.min(maxDelay, retryDelay * Math.pow(1.5, retryCount));
+        retryCount += 1;
+        reconnectTimer = window.setTimeout(connect, delay);
+      } else {
+        notifyStatus('disconnected');
+      }
+    };
+  };
+
+  connect();
+
+  return {
+    get socket() {
+      return ws;
+    },
+    close: () => {
+      shouldReconnect = false;
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      stopHeartbeat();
+      ws?.close();
+    }
+  };
 };

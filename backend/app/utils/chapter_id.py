@@ -13,15 +13,21 @@ import re
 
 
 def _normalize_chapter_id(chapter_id: str) -> str:
-    """Normalize chapter id to a standard uppercase form / 规范化章节ID"""
+    """Normalize chapter id to a standard uppercase form."""
     if not chapter_id:
         return ""
-    normalized = chapter_id.strip()
+    normalized = str(chapter_id).strip()
     if not normalized:
         return ""
-    if normalized.lower().startswith("ch"):
-        normalized = "C" + normalized[2:]
-    return normalized.upper()
+    lowered = normalized.lower()
+    if lowered.startswith("volume"):
+        lowered = "v" + lowered[6:]
+    elif lowered.startswith("vol"):
+        lowered = "v" + lowered[3:]
+    lowered = re.sub(r"[^a-z0-9]", "", lowered)
+    if lowered.startswith("ch"):
+        lowered = "c" + lowered[2:]
+    return lowered.upper()
 
 
 def parse_chapter_number(chapter: str) -> Optional[int]:
@@ -187,3 +193,15 @@ class ChapterIDValidator:
         if parsed and parsed["volume"] > 0:
             return f"V{parsed['volume']}"
         return None
+
+
+def normalize_chapter_id(chapter_id: str, default_volume: str = "V1") -> str:
+    """Normalize chapter id to canonical form with volume prefix."""
+    normalized = _normalize_chapter_id(chapter_id)
+    if not normalized:
+        return ""
+    if ChapterIDValidator.validate(normalized):
+        if normalized.startswith("C"):
+            return f"{default_volume}{normalized}"
+        return normalized
+    return normalized

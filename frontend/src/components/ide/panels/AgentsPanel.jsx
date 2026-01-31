@@ -14,8 +14,8 @@ const fetcher = (fn) => fn().then(res => res.data);
 
 const ROLES = [
     { id: 'archivist', label: '档案员', eng: 'Archivist', icon: 'Book', desc: '整理设定 & 构建上下文' },
-    { id: 'writer', label: '主笔', eng: 'Writer', icon: 'Edit3', desc: '流式撰写章节正文' },
-    { id: 'editor', label: '编辑', eng: 'Editor', icon: 'Bot', desc: '根据反馈修改 & 生成 Diff' },
+    { id: 'writer', label: '主笔', eng: 'Writer', icon: 'Edit3', desc: '撰写章节正文' },
+    { id: 'editor', label: '编辑', eng: 'Editor', icon: 'Bot', desc: '根据反馈修改章节' },
 ];
 
 const AgentsPanel = ({ children, mode = 'assistant' }) => {

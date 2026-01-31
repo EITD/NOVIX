@@ -14,7 +14,6 @@ import { cn } from '../../ui/core';
 const AGENT_NAMES = {
     archivist: '档案员',
     writer: '撰稿人',
-    reviewer: '审核员',
     editor: '编辑',
     orchestrator: '指挥官'
 };
@@ -22,7 +21,6 @@ const AGENT_NAMES = {
 const AGENT_COLORS = {
     archivist: '#8b5cf6', // Indigo/Purple
     writer: '#3b82f6',    // Blue
-    reviewer: '#f59e0b',  // Amber
     editor: '#10b981',    // Emerald
     orchestrator: '#64748b' // Slate
 };

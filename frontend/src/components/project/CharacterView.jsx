@@ -1,35 +1,23 @@
-import React, { useState } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Card, Button, Input } from '../ui/core';
 import { Plus, User, X, Save } from 'lucide-react';
 
 export function CharacterView({ characters, onEdit, onSave, editing, onCancel }) {
   const [formData, setFormData] = useState({
     name: '',
-    identity: '',
-    appearance: '',
-    motivation: '',
-    personality: [],
-    speech_pattern: '',
-    relationships: [],
-    boundaries: [],
-    arc: ''
+    description: ''
   });
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (editing) {
-      setFormData(editing);
+      setFormData({
+        name: editing.name || '',
+        description: editing.description || ''
+      });
     } else {
-      // Reset form when not editing
       setFormData({
         name: '',
-        identity: '',
-        appearance: '',
-        motivation: '',
-        personality: [],
-        speech_pattern: '',
-        relationships: [],
-        boundaries: [],
-        arc: ''
+        description: ''
       });
     }
   }, [editing]);
@@ -37,16 +25,14 @@ export function CharacterView({ characters, onEdit, onSave, editing, onCancel })
   const handleSubmit = (e) => {
     e.preventDefault();
     const payload = {
-      ...formData,
-      identity: (formData.identity || '').trim() || '未填写',
-      motivation: (formData.motivation || '').trim() || '未填写',
+      name: (formData.name || '').trim(),
+      description: (formData.description || '').trim()
     };
     onSave(payload);
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-140px)]">
-      {/* Left List */}
       <div className="lg:col-span-4 flex flex-col gap-4 overflow-hidden">
         <div className="flex justify-between items-center">
           <h3 className="text-lg font-bold text-ink-900">角色列表</h3>
@@ -59,24 +45,24 @@ export function CharacterView({ characters, onEdit, onSave, editing, onCancel })
             <div
               key={char.name}
               onClick={() => onEdit(char)}
-              className={`p-4 rounded-lg border cursor-pointer transition-all shadow-sm ${editing?.name === char.name
-                ? 'bg-primary text-white border-primary shadow-md'
-                : 'bg-surface border-border text-ink-500 hover:border-primary/50 hover:text-ink-900 hover:shadow-md'
-                }`}
+              className={`p-4 rounded-lg border cursor-pointer transition-all shadow-sm ${
+                editing?.name === char.name
+                  ? 'bg-primary text-white border-primary shadow-md'
+                  : 'bg-surface border-border text-ink-500 hover:border-primary/50 hover:text-ink-900 hover:shadow-md'
+              }`}
             >
               <div className="flex items-center justify-between mb-1">
                 <span className="font-bold font-serif text-lg">{char.name}</span>
                 <User size={14} className="opacity-70" />
               </div>
               <div className={`text-xs opacity-90 line-clamp-2 ${editing?.name === char.name ? 'text-white' : 'text-ink-400'}`}>
-                {char.identity}
+                {char.description || '暂无描述'}
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Right Editor */}
       <Card className="lg:col-span-8 bg-surface border border-border rounded-lg overflow-hidden flex flex-col shadow-paper">
         {editing ? (
           <div className="flex-1 flex flex-col">
@@ -93,68 +79,26 @@ export function CharacterView({ characters, onEdit, onSave, editing, onCancel })
             </div>
             <div className="flex-1 overflow-y-auto p-8">
               <form id="char-form" onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-ink-500 uppercase">名称</label>
-                    <Input
-                      type="text"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      placeholder="角色姓名"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-ink-500 uppercase">身份</label>
-                    <Input
-                      type="text"
-                      value={formData.identity}
-                      onChange={(e) => setFormData({ ...formData, identity: e.target.value })}
-                      placeholder="例如：流浪剑客"
-                    />
-                  </div>
-                </div>
-
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-ink-500 uppercase">外貌特征</label>
-                  <textarea
-                    className="flex min-h-[80px] w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm placeholder:text-ink-400 focus-visible:outline-none focus-visible:border-ink-900 transition-colors"
-                    value={formData.appearance || ''}
-                    onChange={(e) => setFormData({ ...formData, appearance: e.target.value })}
-                    placeholder="例如：银色长发，琥珀色眼睛，身穿蓝白相间的冒险者服装..."
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-ink-500 uppercase">核心动机</label>
+                  <label className="text-xs font-bold text-ink-500 uppercase">名称</label>
                   <Input
                     type="text"
-                    value={formData.motivation}
-                    onChange={(e) => setFormData({ ...formData, motivation: e.target.value })}
-                    placeholder="例如：寻找失散的亲人"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="角色姓名"
+                    required
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-ink-500 uppercase">性格特征 (逗号分隔)</label>
-                  <Input
-                    type="text"
-                    value={Array.isArray(formData.personality) ? formData.personality.join(', ') : ''}
-                    onChange={(e) => setFormData({ ...formData, personality: e.target.value.split(',').map(s => s.trim()) })}
-                    placeholder="例如：勇敢, 鲁莽, 忠诚"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-ink-500 uppercase">角色弧光 (Arc)</label>
+                  <label className="text-xs font-bold text-ink-500 uppercase">描述</label>
                   <textarea
-                    className="flex min-h-[100px] w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm placeholder:text-ink-400 focus-visible:outline-none focus-visible:border-ink-900 transition-colors"
-                    value={formData.arc}
-                    onChange={(e) => setFormData({ ...formData, arc: e.target.value })}
-                    placeholder="描述角色的成长路径..."
+                    className="flex min-h-[200px] w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm placeholder:text-ink-400 focus-visible:outline-none focus-visible:border-ink-900 transition-colors"
+                    value={formData.description || ''}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    placeholder="身份、外貌、性格、关系、动机等"
                   />
                 </div>
-
               </form>
             </div>
             <div className="p-4 border-t border-border bg-gray-50 flex justify-end gap-3">

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.schemas.draft import ChapterSummary
 from app.storage import DraftStorage
 from app.utils.version import increment_version
+from app.utils.chapter_id import normalize_chapter_id
 
 router = APIRouter(prefix="/projects/{project_id}/drafts", tags=["drafts"])
 draft_storage = DraftStorage()
@@ -97,6 +98,7 @@ async def delete_chapter(project_id: str, chapter: str):
 
 class UpdateContentRequest(BaseModel):
     content: str
+    title: Optional[str] = None
 
 
 @router.put("/{chapter}/content")
@@ -107,7 +109,7 @@ async def update_draft_content(project_id: str, chapter: str, body: UpdateConten
     versions = await draft_storage.list_draft_versions(project_id, chapter)
     next_version = "v1" if not versions else increment_version(versions[-1])
 
-    await draft_storage.save_draft(
+    draft = await draft_storage.save_draft(
         project_id=project_id,
         chapter=chapter,
         version=next_version,
@@ -115,4 +117,24 @@ async def update_draft_content(project_id: str, chapter: str, body: UpdateConten
         word_count=len(body.content),
     )
 
-    return {"success": True, "version": next_version, "message": "Content saved"}
+    canonical = normalize_chapter_id(chapter) or draft.chapter or chapter
+    if body.title is not None:
+        summary = await draft_storage.get_chapter_summary(project_id, canonical)
+        if summary:
+            summary.title = body.title
+            summary.word_count = len(body.content)
+        else:
+            summary = ChapterSummary(
+                chapter=canonical,
+                title=body.title,
+                word_count=len(body.content),
+            )
+        await draft_storage.save_chapter_summary(project_id, summary)
+
+    return {
+        "success": True,
+        "version": next_version,
+        "message": "Content saved",
+        "chapter": canonical,
+        "title": body.title,
+    }

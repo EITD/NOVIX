@@ -13,6 +13,7 @@ import { Check, X, ChevronDown, ChevronRight, Plus, Minus, FileText } from 'luci
 const DiffReviewView = ({
     hunks = [],           // Array of diff hunks from backend
     stats = {},           // { additions: N, deletions: N }
+    decisions = {},       // { [hunkId]: 'accepted' | 'rejected' }
     onAcceptAll,          // Callback to accept all changes
     onRejectAll,          // Callback to reject all changes
     onAcceptHunk,         // Callback to accept single hunk
@@ -81,7 +82,17 @@ const DiffReviewView = ({
 
             {/* Diff Content */}
             <div className="flex-1 overflow-y-auto custom-scrollbar">
-                {hunks.map((hunk, hunkIndex) => (
+                {hunks.map((hunk, hunkIndex) => {
+                    const decision = decisions[hunk.id];
+                    const statusBadge = decision === 'accepted'
+                        ? '已接受'
+                        : decision === 'rejected'
+                            ? '已拒绝'
+                            : '待确认';
+
+                    const { beforeText, afterText } = buildComparisonText(hunk);
+
+                    return (
                     <div key={hunkIndex} className="border-b border-border last:border-b-0">
                         {/* Hunk Header */}
                         <button
@@ -97,13 +108,16 @@ const DiffReviewView = ({
                                 <span className="text-[10px] font-mono text-blue-600">
                                     {hunk.header || `变更区块 ${hunkIndex + 1}`}
                                 </span>
+                                <span className="text-[10px] text-ink-400">
+                                    {statusBadge}
+                                </span>
                             </div>
 
                             <div className="flex items-center gap-1">
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        onRejectHunk?.(hunkIndex);
+                                        onRejectHunk?.(hunk.id);
                                     }}
                                     className="p-1 text-red-500 hover:bg-red-100 rounded transition-colors"
                                     title="拒绝此修改"
@@ -113,7 +127,7 @@ const DiffReviewView = ({
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        onAcceptHunk?.(hunkIndex);
+                                        onAcceptHunk?.(hunk.id);
                                     }}
                                     className="p-1 text-green-600 hover:bg-green-100 rounded transition-colors"
                                     title="接受此修改"
@@ -133,20 +147,45 @@ const DiffReviewView = ({
                                     transition={{ duration: 0.15 }}
                                     className="overflow-hidden"
                                 >
-                                    <div className="font-mono text-xs">
-                                        {hunk.changes?.map((change, changeIndex) => (
-                                            <DiffLine
-                                                key={changeIndex}
-                                                type={change.type}
-                                                content={change.content}
-                                            />
-                                        ))}
+                                    <div className="px-4 py-3 space-y-3 bg-white">
+                                        {hunk.reason && (
+                                            <div className="text-[11px] text-ink-500 bg-amber-50 border border-amber-100 rounded-md px-3 py-2">
+                                                <span className="font-semibold text-amber-700">修改原因：</span>
+                                                <span>{hunk.reason}</span>
+                                            </div>
+                                        )}
+
+                                        <div className="grid grid-cols-1 gap-3">
+                                            <div className="rounded-md border border-red-100 bg-red-50/60 p-3">
+                                                <div className="text-[10px] font-semibold text-red-600 mb-2">修改前</div>
+                                                <pre className="font-mono text-xs text-ink-700 whitespace-pre-wrap break-words">
+                                                    {beforeText || '（无内容）'}
+                                                </pre>
+                                            </div>
+                                            <div className="rounded-md border border-green-100 bg-green-50/60 p-3">
+                                                <div className="text-[10px] font-semibold text-green-600 mb-2">修改后</div>
+                                                <pre className="font-mono text-xs text-ink-700 whitespace-pre-wrap break-words">
+                                                    {afterText || '（无内容）'}
+                                                </pre>
+                                            </div>
+                                        </div>
+
+                                        <div className="font-mono text-xs border border-border rounded-md overflow-hidden">
+                                            {hunk.changes?.map((change, changeIndex) => (
+                                                <DiffLine
+                                                    key={changeIndex}
+                                                    type={change.type}
+                                                    content={change.content}
+                                                />
+                                            ))}
+                                        </div>
                                     </div>
                                 </motion.div>
                             )}
                         </AnimatePresence>
                     </div>
-                ))}
+                    );
+                })}
             </div>
 
             {/* Footer */}
@@ -190,6 +229,25 @@ const DiffLine = ({ type, content }) => {
             </span>
         </div>
     );
+};
+
+const buildComparisonText = (hunk) => {
+    const beforeLines = [];
+    const afterLines = [];
+
+    hunk.changes?.forEach((change) => {
+        if (change.type === "context" || change.type === "delete") {
+            beforeLines.push(change.content);
+        }
+        if (change.type === "context" || change.type === "add") {
+            afterLines.push(change.content);
+        }
+    });
+
+    return {
+        beforeText: beforeLines.join("\n"),
+        afterText: afterLines.join("\n")
+    };
 };
 
 export default DiffReviewView;
