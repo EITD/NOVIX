@@ -1,48 +1,49 @@
 @echo off
+setlocal
 chcp 65001 >nul
 echo ========================================
-echo    NOVIX 一键启动
+echo    NOVIX One-Click Start
 echo ========================================
 echo.
 
-REM 检查 Python
+REM Check Python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [错误] 未检测到 Python，请先安装 Python 3.10+
-    echo 下载地址: https://www.python.org/downloads/
+    echo [Error] Python not found. Please install Python 3.10+.
+    echo Download: https://www.python.org/downloads/
     echo.
     pause
     exit /b 1
 )
 
-REM 检查 Node.js
+REM Check Node.js
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [错误] 未检测到 Node.js，请先安装 Node.js 18+
-    echo 下载地址: https://nodejs.org/
+    echo [Error] Node.js not found. Please install Node.js 18+.
+    echo Download: https://nodejs.org/
     echo.
     pause
     exit /b 1
 )
 
-echo [1/3] 启动后端服务...
+echo [1/3] Starting backend...
 start "NOVIX Backend" cmd /k "cd /d %~dp0backend && run.bat"
 timeout /t 3 >nul
 
-echo [2/3] 启动前端服务...
+echo [2/3] Starting frontend...
 start "NOVIX Frontend" cmd /k "cd /d %~dp0frontend && run.bat"
 
 echo.
-echo [3/3] 服务启动完成！
+echo [3/3] Services started.
 echo.
 echo ========================================
-echo  访问地址:
+echo  URLs:
 echo ----------------------------------------
-echo  前端界面:   http://localhost:3000
-echo  后端 API:   http://localhost:8000
-echo  API 文档:   http://localhost:8000/docs
+echo  Frontend:  http://localhost:3000
+echo  Backend:   http://localhost:8000
+echo  Docs:      http://localhost:8000/docs
 echo ========================================
 echo.
-echo 提示: 关闭弹出的窗口即可停止服务。
+echo Tip: Close the opened windows to stop services.
 echo.
 pause
