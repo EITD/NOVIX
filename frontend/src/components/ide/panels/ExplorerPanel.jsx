@@ -1,135 +1,205 @@
-﻿import React, { useState } from 'react';
-import { FileText, Plus, RefreshCw } from 'lucide-react';
-import { useIDE } from '../../../context/IDEContext';
-import { sessionAPI } from '../../../api';
-import VolumeManager from '../VolumeManager';
-import VolumeTree from '../VolumeTree';
-import AnalysisSyncDialog from '../AnalysisSyncDialog';
-import AnalysisReviewDialog from '../../writing/AnalysisReviewDialog';
-
 /**
  * ExplorerPanel - 资源管理器面板
- * 仅展示分卷与章节结构。
+ * 仅负责资源树与相关对话框容器，不改变业务逻辑。
  */
-export default function ExplorerPanel() {
+import { useState } from 'react';
+import { useIDE } from '../../../context/IDEContext';
+import { bindingsAPI, draftsAPI, evidenceAPI, sessionAPI, textChunksAPI } from '../../../api';
+import AnalysisSyncDialog from '../AnalysisSyncDialog';
+import AnalysisReviewDialog from '../../writing/AnalysisReviewDialog';
+import VolumeManageDialog from '../VolumeManageDialog';
+import VolumeTree from '../VolumeTree';
+import { Layers, RefreshCw, Plus, ArrowUpDown } from 'lucide-react';
+import { cn } from '../../ui/core';
+
+export default function ExplorerPanel({ className }) {
   const { state, dispatch } = useIDE();
   const [syncOpen, setSyncOpen] = useState(false);
-  const [syncLoading, setSyncLoading] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewItems, setReviewItems] = useState([]);
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncResults, setSyncResults] = useState([]);
+  const [syncError, setSyncError] = useState('');
+  const [indexRebuildLoading, setIndexRebuildLoading] = useState(false);
+  const [indexRebuildError, setIndexRebuildError] = useState('');
+  const [indexRebuildSuccess, setIndexRebuildSuccess] = useState(false);
+  const [volumeManageOpen, setVolumeManageOpen] = useState(false);
+  const [reorderMode, setReorderMode] = useState(false);
 
-  const handleChapterClick = (chapter) => {
-    const chapterId = typeof chapter === 'string' ? chapter : chapter.chapter;
-    const chapterTitle = typeof chapter === 'string' ? '' : (chapter.title || '');
-    dispatch({
-      type: 'SET_ACTIVE_DOCUMENT',
-      payload: {
-        type: 'chapter',
-        id: chapterId,
-        data: { title: chapterTitle }
-      }
-    });
-  };
-
-  const handleSyncConfirm = async (chapterIds) => {
-    if (!state.activeProjectId) return;
+  const handleSyncConfirm = async (selectedChapters) => {
+    if (selectedChapters.length === 0 || !state.activeProjectId) return;
+    setSyncError('');
+    setSyncResults([]);
     setSyncLoading(true);
     try {
-      const resp = await sessionAPI.analyzeBatch(state.activeProjectId, { chapters: chapterIds });
-      const results = resp.data?.results || [];
-      const analyses = results
-        .filter((item) => item.success && item.analysis)
-        .map((item) => ({ chapter: item.chapter, analysis: item.analysis }));
-      if (analyses.length === 0) {
-        throw new Error('未获取到可审阅的分析结果');
+      const res = await sessionAPI.analyzeSync(state.activeProjectId, { chapters: selectedChapters });
+      const payload = Array.isArray(res.data)
+        ? { success: true, results: res.data }
+        : (res.data || {});
+      if (!payload?.success) {
+        throw new Error(payload?.error || payload?.detail || '同步失败');
       }
-      setReviewItems(analyses);
-      setReviewOpen(true);
-      setSyncOpen(false);
-    } catch (error) {
-      console.error(error);
-      alert(`同步失败: ${error.message}`);
+      const results = Array.isArray(payload?.results) ? payload.results : [];
+      const bindingResults = await Promise.all(
+        results.map(async (item) => {
+          const chapter = item?.chapter;
+          if (!chapter) return null;
+          try {
+            const bindingResp = await bindingsAPI.get(state.activeProjectId, chapter);
+            return { ...item, binding: bindingResp.data?.binding || null };
+          } catch (error) {
+            return {
+              ...item,
+              binding_error: error?.response?.data?.detail || error?.message || '读取绑定失败',
+            };
+          }
+        })
+      );
+      setSyncResults(bindingResults.filter(Boolean));
+    } catch (err) {
+      console.error(err);
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setSyncError(detail || err?.message || '同步失败');
     } finally {
       setSyncLoading(false);
     }
   };
 
-  const handleReviewSave = async (payload) => {
+  const handleRebuildBindings = async (selectedChapters) => {
     if (!state.activeProjectId) return;
+    setSyncError('');
+    setSyncResults([]);
+    setSyncLoading(true);
+    try {
+      const res = await bindingsAPI.rebuildBatch(state.activeProjectId, {
+        chapters: selectedChapters.length > 0 ? selectedChapters : undefined
+      });
+      if (!res.data?.success) {
+        throw new Error(res.data?.error || '重建失败');
+      }
+      const results = Array.isArray(res.data?.results) ? res.data.results : [];
+      setSyncResults(results);
+    } catch (err) {
+      console.error(err);
+      setSyncError(err?.message || '重建失败');
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  const handleRebuildIndexes = async () => {
+    if (!state.activeProjectId) return;
+    setIndexRebuildError('');
+    setIndexRebuildSuccess(false);
+    setIndexRebuildLoading(true);
+    try {
+      await evidenceAPI.rebuild(state.activeProjectId);
+      await textChunksAPI.rebuild(state.activeProjectId);
+      setIndexRebuildSuccess(true);
+    } catch (err) {
+      console.error(err);
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      setIndexRebuildError(detail || err?.message || '重建失败');
+    } finally {
+      setIndexRebuildLoading(false);
+    }
+  };
+
+  const handleReviewSave = async (updatedAnalyses) => {
     setReviewSaving(true);
     try {
-      const resp = await sessionAPI.saveAnalysisBatch(state.activeProjectId, {
-        items: payload,
-        overwrite: true,
-      });
-      if (!resp.data?.success) {
-        throw new Error(resp.data?.error || '保存失败');
-      }
+      await draftsAPI.saveAnalyses(state.activeProjectId, updatedAnalyses);
       setReviewOpen(false);
-      setReviewItems([]);
-    } catch (error) {
-      console.error(error);
-      alert(`保存失败: ${error.message}`);
+    } catch (err) {
+      console.error(err);
     } finally {
       setReviewSaving(false);
     }
   };
 
+  const handleChapterSelect = (chapter) => {
+    dispatch({ type: 'SET_ACTIVE_DOCUMENT', payload: { ...chapter, type: 'chapter' } });
+  };
+
+  // 通用操作按钮组件
+  const ActionButton = ({ onClick, icon: Icon, title }) => (
+    <button
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className={cn(
+        "p-1 rounded-[2px] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-none outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)]",
+        "opacity-70 hover:opacity-100 focus:opacity-100",
+        "flex items-center justify-center w-6 h-6"
+      )}
+    >
+      <Icon size={14} strokeWidth={1.5} />
+    </button>
+  );
+
   return (
-    <div className="h-full flex flex-col">
-      <div className="px-3 py-2 border-b border-border/50 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-ink-900 font-bold text-sm">
-          <FileText size={14} className="text-primary" />
-          <span>资源管理器</span>
-        </div>
-        <div className="flex items-center gap-3 text-xs">
-          <button
-            onClick={() => setSyncOpen(true)}
-            className="flex items-center gap-1 text-ink-500 hover:text-primary"
-            title="分析同步"
-          >
-            <RefreshCw size={12} />
-            分析同步
-          </button>
-          <button
-            onClick={() =>
-              dispatch({
-                type: 'OPEN_CREATE_CHAPTER_DIALOG',
-                payload: { volumeId: state.selectedVolumeId },
-              })
-            }
-            className="flex items-center gap-1 text-primary hover:text-primary/80"
+    <div className={cn('anti-theme explorer-panel flex flex-col h-full bg-[var(--vscode-bg)] text-[var(--vscode-fg)] select-none', className)}>
+      {/* VS Code 风格工具栏 */}
+      <div className="flex items-center h-[35px] px-4 font-sans text-[11px] font-bold tracking-wide text-[var(--vscode-fg-subtle)] uppercase bg-[var(--vscode-sidebar-bg)] border-b border-[var(--vscode-sidebar-border)]">
+        <span>资源管理器</span>
+        <div className="flex-1" />
+
+        {/* 右侧工具按钮 */}
+        <div className="flex items-center gap-0.5">
+          <ActionButton
+            onClick={() => setReorderMode((prev) => !prev)}
+            icon={ArrowUpDown}
+            title={reorderMode ? "完成排序" : "调整顺序"}
+          />
+          <ActionButton
+            onClick={() => dispatch({ type: 'OPEN_CREATE_CHAPTER_DIALOG', payload: { volumeId: state.selectedVolumeId } })}
+            icon={Plus}
             title="新建章节"
-          >
-            <Plus size={12} />
-            新建章节
-          </button>
+          />
+          <ActionButton
+            onClick={() => {
+              setSyncError('');
+              setSyncResults([]);
+              setIndexRebuildError('');
+              setIndexRebuildSuccess(false);
+              setSyncOpen(true);
+            }}
+            icon={RefreshCw}
+            title="同步分析"
+          />
+          <ActionButton
+            onClick={() => setVolumeManageOpen(true)}
+            icon={Layers}
+            title="分卷管理"
+          />
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-4">
-        <VolumeManager
-          projectId={state.activeProjectId}
-          onVolumeSelect={(volumeId) =>
-            dispatch({ type: 'SET_SELECTED_VOLUME_ID', payload: volumeId })
-          }
-          onRefresh={() => {}}
-        />
-
-        <VolumeTree
-          projectId={state.activeProjectId}
-          onChapterSelect={handleChapterClick}
-          selectedChapter={state.activeDocument?.id}
-        />
+      <div className="flex-1 overflow-hidden relative">
+        <div className="absolute inset-0 overflow-y-auto custom-scrollbar">
+          <VolumeTree
+            projectId={state.activeProjectId}
+            onChapterSelect={handleChapterSelect}
+            selectedChapter={state.activeDocument?.id}
+            reorderMode={reorderMode}
+          />
+        </div>
       </div>
 
       <AnalysisSyncDialog
         open={syncOpen}
         projectId={state.activeProjectId}
         loading={syncLoading}
+        results={syncResults}
+        error={syncError}
+        indexRebuildLoading={indexRebuildLoading}
+        indexRebuildError={indexRebuildError}
+        indexRebuildSuccess={indexRebuildSuccess}
         onClose={() => setSyncOpen(false)}
         onConfirm={handleSyncConfirm}
+        onRebuild={handleRebuildBindings}
+        onRebuildIndexes={handleRebuildIndexes}
       />
 
       <AnalysisReviewDialog
@@ -138,6 +208,12 @@ export default function ExplorerPanel() {
         onCancel={() => setReviewOpen(false)}
         onSave={handleReviewSave}
         saving={reviewSaving}
+      />
+
+      <VolumeManageDialog
+        open={volumeManageOpen}
+        projectId={state.activeProjectId}
+        onClose={() => setVolumeManageOpen(false)}
       />
     </div>
   );

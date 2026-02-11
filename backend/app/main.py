@@ -18,7 +18,11 @@ from app.routers import (
     drafts_router,
     session_router,
     config_router,
-    proxy_router
+    proxy_router,
+    text_chunks_router,
+    evidence_router,
+    bindings_router,
+    memory_pack_router,
 )
 from app.routers.fanfiction import router as fanfiction_router
 from app.routers.websocket import router as websocket_router
@@ -74,7 +78,11 @@ routers = [
     websocket_router,
     fanfiction_router,
     proxy_router,
-    volumes_router
+    volumes_router,
+    text_chunks_router,
+    evidence_router,
+    bindings_router,
+    memory_pack_router,
 ]
 
 for router in routers:

@@ -2,6 +2,10 @@
 import { Save, ChevronDown, Sparkles } from 'lucide-react';
 import { cn } from '../ui/core';
 
+/**
+ * SaveMenu - 保存菜单
+ * 提供保存与分析保存的快捷入口。
+ */
 export default function SaveMenu({
     disabled = false,
     busy = false,
@@ -42,10 +46,10 @@ export default function SaveMenu({
                 onClick={handleToggle}
                 disabled={disabled}
                 className={cn(
-                    'flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors',
+                    'flex items-center gap-2 px-3 py-1.5 rounded-[6px] text-sm transition-colors',
                     disabled
-                        ? 'bg-ink-100 text-ink-400'
-                        : 'bg-primary text-white hover:bg-primary-hover'
+                        ? 'bg-[var(--vscode-list-hover)] text-[var(--vscode-fg-subtle)]'
+                        : 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90'
                 )}
                 title="保存"
             >
@@ -55,19 +59,19 @@ export default function SaveMenu({
             </button>
 
             {open && !disabled && (
-                <div className="absolute right-0 top-full mt-2 w-44 bg-surface border border-border rounded-lg shadow-lg py-1 z-50 animate-in fade-in slide-in-from-top-2">
+                <div className="absolute right-0 top-full mt-2 w-44 glass-panel border border-[var(--vscode-sidebar-border)] rounded-[6px] py-1 z-50 soft-dropdown">
                     <button
                         onClick={() => handleAction('analyze')}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50 transition-colors"
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
                     >
-                        <Sparkles size={14} className="text-primary" />
+                        <Sparkles size={14} className="text-[var(--vscode-focus-border)]" />
                         <span>分析并保存</span>
                     </button>
                     <button
                         onClick={() => handleAction('save')}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-ink-700 hover:bg-ink-50 transition-colors"
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
                     >
-                        <Save size={14} className="text-ink-400" />
+                        <Save size={14} className="text-[var(--vscode-fg-subtle)]" />
                         <span>仅保存</span>
                     </button>
                 </div>

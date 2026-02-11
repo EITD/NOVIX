@@ -12,6 +12,10 @@ import {
 } from 'lucide-react';
 import { cn } from '../../components/ui/core';
 
+/**
+ * ActivityBar - 左侧活动栏
+ * 负责主要面板切换与版权信息弹窗入口。
+ */
 export function ActivityBar() {
   const { state, dispatch } = useIDE();
   const [showLicense, setShowLicense] = useState(false);
@@ -28,11 +32,11 @@ export function ActivityBar() {
 
   return (
     <>
-      <div className="w-12 flex flex-col items-center py-2 bg-surface/80 border-r border-border backdrop-blur-sm z-30">
+      <div className="w-12 flex flex-col items-center py-2 bg-[var(--vscode-sidebar-bg)] border-r border-[var(--vscode-sidebar-border)] z-30">
         <div className="flex-1 space-y-1 relative">
           {activeIndex !== -1 && state.sidePanelVisible && (
             <motion.div
-              className="absolute left-1 w-10 h-10 bg-primary/10 rounded-md"
+              className="absolute left-1 w-10 h-10 bg-[var(--vscode-list-hover)] rounded-[6px]"
               initial={false}
               animate={{ top: `${activeIndex * 44 + 4}px` }}
               transition={{ type: 'spring', stiffness: 400, damping: 30 }}
@@ -54,8 +58,8 @@ export function ActivityBar() {
           onClick={() => setShowLicense(true)}
           title="版权声明"
           className={cn(
-            'w-10 h-10 flex items-center justify-center rounded-md transition-all duration-200 group relative z-10',
-            'text-ink-400 hover:text-ink-900'
+            'w-10 h-10 flex items-center justify-center rounded-xl transition-all duration-200 group relative z-10',
+            'text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]'
           )}
         >
           <Info size={20} strokeWidth={2} />
@@ -68,7 +72,7 @@ export function ActivityBar() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4 anti-theme"
             onClick={() => setShowLicense(false)}
           >
             <motion.div
@@ -76,16 +80,16 @@ export function ActivityBar() {
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 20 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-surface rounded-lg shadow-2xl border border-border max-w-3xl w-full max-h-[80vh] overflow-hidden"
+              className="glass-panel rounded-[6px] border border-[var(--vscode-sidebar-border)] max-w-3xl w-full max-h-[80vh] overflow-hidden"
             >
-              <div className="flex items-center justify-between p-4 border-b border-border">
+              <div className="flex items-center justify-between p-4 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
                 <div>
-                  <h2 className="text-xl font-bold text-ink-900">版权声明</h2>
-                  <p className="text-xs text-ink-500 mt-0.5">Copyright & License</p>
+                  <h2 className="text-xl font-bold text-[var(--vscode-fg)]">版权与许可</h2>
+                  <p className="text-xs text-[var(--vscode-fg-subtle)] mt-0.5">Copyright & License</p>
                 </div>
                 <button
                   onClick={() => setShowLicense(false)}
-                  className="p-2 hover:bg-ink-100 rounded-lg transition-colors"
+                  className="p-2 hover:bg-[var(--vscode-list-hover)] rounded-[6px] transition-colors"
                 >
                   <X size={20} />
                 </button>
@@ -93,7 +97,7 @@ export function ActivityBar() {
 
               <div className="p-6 overflow-y-auto max-h-[calc(80vh-80px)]">
                 <div className="prose prose-sm max-w-none">
-                  <pre className="whitespace-pre-wrap text-xs leading-relaxed font-mono bg-ink-50 p-4 rounded-lg border border-border">
+                  <pre className="whitespace-pre-wrap text-xs leading-relaxed font-mono bg-[var(--vscode-input-bg)] p-4 rounded-[6px] border border-[var(--vscode-sidebar-border)] text-[var(--vscode-fg)]">
                     {`PolyForm Noncommercial License 1.0.0
 
 https://polyformproject.org/licenses/noncommercial/1.0.0
@@ -162,15 +166,15 @@ function ActivityItem({ icon: Icon, label, isActive, onClick }) {
       onClick={onClick}
       title={label}
       className={cn(
-        'w-10 h-10 flex items-center justify-center rounded-md transition-all duration-200 group relative z-10',
-        isActive ? 'text-primary' : 'text-ink-400 hover:text-ink-900'
+        'w-10 h-10 flex items-center justify-center rounded-xl transition-all duration-200 group relative z-10',
+        isActive ? 'text-[var(--vscode-fg)]' : 'text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]'
       )}
     >
       <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
       {isActive && (
         <motion.div
           layoutId="activity-indicator"
-          className="absolute left-0 top-2 bottom-2 w-[3px] bg-primary rounded-r-full"
+          className="absolute left-0 top-2 bottom-2 w-[2px] bg-[var(--vscode-focus-border)] rounded-r-full"
           transition={{ type: 'spring', stiffness: 500, damping: 30 }}
         />
       )}

@@ -3,31 +3,41 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button, Card, Input } from './ui/core';
 
 /**
- * PreWritingQuestionsDialog
- * Shows dynamic pre-writing questions before the first draft.
+ * PreWritingQuestionsDialog - 写作前问题确认
+ * 在首稿开始前收集关键信息。
  */
-export default function PreWritingQuestionsDialog({ open, questions = [], onConfirm, onSkip }) {
-    const [answers, setAnswers] = useState({});
+export default function PreWritingQuestionsDialog({
+    open,
+    questions = [],
+    onConfirm,
+    onSkip,
+    title = '写作前确认',
+    subtitle = '先回答几个关键问题，帮助主笔精准开写。',
+    confirmText = '开始撰写',
+    skipText = '跳过',
+}) {
+    const [answers, setAnswers] = useState([]);
 
     useEffect(() => {
         if (!open) return;
-        const initial = {};
-        questions.forEach((q) => {
-            initial[q.type] = '';
-        });
-        setAnswers(initial);
+        setAnswers((questions || []).map(() => ''));
     }, [open, questions]);
 
-    const handleChange = (type, value) => {
-        setAnswers((prev) => ({ ...prev, [type]: value }));
+    const handleChange = (index, value) => {
+        setAnswers((prev) => {
+            const next = [...(prev || [])];
+            next[index] = value;
+            return next;
+        });
     };
 
     const handleConfirm = () => {
         if (onConfirm) {
-            const payload = questions.map((q) => ({
+            const payload = questions.map((q, index) => ({
                 type: q.type,
                 question: q.text,
-                answer: answers[q.type] || '',
+                key: q.key,
+                answer: answers[index] || '',
             }));
             onConfirm(payload);
         }
@@ -41,39 +51,42 @@ export default function PreWritingQuestionsDialog({ open, questions = [], onConf
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black/60 z-40"
+                        className="fixed inset-0 bg-black/30 z-40"
                     />
                     <motion.div
                         initial={{ opacity: 0, scale: 0.96 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.96 }}
-                        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+                        className="fixed inset-0 z-50 flex items-center justify-center p-4 anti-theme"
                     >
                         <Card className="w-full max-w-2xl p-6 space-y-5">
                             <div className="space-y-1">
-                                <h2 className="text-xl font-bold text-ink-900">写作前确认</h2>
-                                <p className="text-sm text-ink-500">
-                                    先回答几个关键问题，帮助主笔精准开写。
+                                <h2 className="text-xl font-bold text-[var(--vscode-fg)]">{title}</h2>
+                                <p className="text-sm text-[var(--vscode-fg-subtle)]">
+                                    {subtitle}
                                 </p>
                             </div>
 
                             <div className="space-y-4">
-                                {questions.map((q) => (
-                                    <div key={q.type} className="space-y-2">
-                                        <div className="text-sm font-semibold text-ink-800">{q.text}</div>
+                                {questions.map((q, index) => (
+                                    <div key={`${q.type || 'q'}-${index}`} className="space-y-2">
+                                        <div className="text-sm font-semibold text-[var(--vscode-fg)]">{q.text}</div>
+                                        {q.reason && (
+                                            <div className="text-xs text-[var(--vscode-fg-subtle)]">原因：{q.reason}</div>
+                                        )}
                                         <Input
-                                            value={answers[q.type] || ''}
-                                            onChange={(e) => handleChange(q.type, e.target.value)}
+                                            value={answers[index] || ''}
+                                            onChange={(e) => handleChange(index, e.target.value)}
                                             placeholder="可简要回答或留空"
-                                            className="bg-surface/70"
+                                            className="bg-[var(--vscode-input-bg)]"
                                         />
                                     </div>
                                 ))}
                             </div>
 
                             <div className="flex justify-end gap-3 pt-2">
-                                <Button variant="ghost" onClick={onSkip}>跳过</Button>
-                                <Button onClick={handleConfirm}>开始撰写</Button>
+                                <Button variant="ghost" onClick={onSkip}>{skipText}</Button>
+                                <Button onClick={handleConfirm}>{confirmText}</Button>
                             </div>
                         </Card>
                     </motion.div>

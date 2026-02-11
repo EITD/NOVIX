@@ -61,6 +61,33 @@ class LLMGateway:
             except Exception as e:
                 logger.error(f"Failed to init profile {profile.get('name')}: {e}")
 
+    def _try_load_profile_by_id(self, profile_id: str) -> bool:
+        """
+        Ensure a profile is loaded into provider cache.
+
+        背景：网关实例可能被长时间持有（例如 orchestrator 缓存了 gateway），
+        但用户在运行期新增/修改了 LLM 配置与分配。此处做一次“按需加载”，
+        避免出现“已分配但未加载”的误报。
+        """
+        if not profile_id:
+            return False
+        if profile_id in self.providers:
+            return True
+
+        profile = llm_config_service.get_profile_by_id(profile_id)
+        if not profile:
+            return False
+
+        try:
+            provider_instance = self._create_provider_from_profile(profile)
+            if not provider_instance:
+                return False
+            self.providers[profile_id] = provider_instance
+            return True
+        except Exception as e:
+            logger.error(f"Failed to lazy-load profile id={profile_id}: {e}")
+            return False
+
     def _create_provider_from_profile(self, profile: Dict[str, Any]) -> Optional[BaseLLMProvider]:
         provider_type = profile.get("provider")
         api_key = profile.get("api_key")
@@ -165,6 +192,10 @@ class LLMGateway:
         # Actually, caller usually passes result of get_provider_for_agent()
         
         target_provider = None
+
+        if provider and provider not in self.providers:
+            # 运行期新增 profile 的兼容：按需加载一次
+            self._try_load_profile_by_id(provider)
 
         if provider in self.providers:
             target_provider = self.providers[provider]
@@ -274,6 +305,8 @@ class LLMGateway:
         """
         # Resolve provider
         target_provider = None
+        if provider and provider not in self.providers:
+            self._try_load_profile_by_id(provider)
         if provider in self.providers:
             target_provider = self.providers[provider]
         else:
@@ -298,6 +331,11 @@ class LLMGateway:
 
         if not profile_id:
             raise ValueError(f"No LLM profile assigned for agent '{agent_name}'.")
+
+        if profile_id not in self.providers:
+            # 运行期修改 assignments/profile 时，orchestrator 可能仍在复用旧 gateway 实例；
+            # 这里做一次按需加载，避免误判为“未加载”。
+            self._try_load_profile_by_id(profile_id)
 
         if profile_id not in self.providers:
             raise ValueError(f"Assigned LLM profile '{profile_id}' not loaded for agent '{agent_name}'.")

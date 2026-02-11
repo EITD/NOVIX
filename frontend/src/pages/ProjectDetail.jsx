@@ -21,8 +21,12 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-const fetcher = (fn) => fn().then(res => res.data);
+const fetcher = (fn) => fn().then((res) => res.data);
 
+/**
+ * ProjectDetail - 项目详情页
+ * 负责切换各功能视图，不改变数据结构与交互语义。
+ */
 function ProjectDetail() {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -79,30 +83,28 @@ function ProjectDetail() {
   };
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div className="anti-theme flex h-screen bg-[var(--vscode-bg)] text-[var(--vscode-fg)] overflow-hidden">
       <motion.div
         initial={{ x: -20, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
-        className="w-64 border-r border-border bg-surface flex flex-col shadow-sm"
+        className="w-64 border-r border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col"
       >
-        <div className="p-4 border-b border-border">
-          <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-            <Button
-              variant="ghost"
-              onClick={() => navigate('/')}
-              className="w-full justify-start text-sm"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              返回作品列表
-            </Button>
-          </motion.div>
+        <div className="p-4 border-b border-[var(--vscode-sidebar-border)]">
+          <Button
+            variant="ghost"
+            onClick={() => navigate('/')}
+            className="w-full justify-start text-sm"
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            返回作品列表
+          </Button>
 
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
           >
-            <h2 className="mt-4 text-xl font-serif font-bold text-ink-900 truncate">
+            <h2 className="mt-4 text-xl font-serif font-bold text-[var(--vscode-fg)] truncate">
               {project?.name || '加载中...'}
             </h2>
           </motion.div>
@@ -188,30 +190,24 @@ function ProjectDetail() {
 
 function NavButton({ active, onClick, icon, label, highlight }) {
   return (
-    <motion.button
+    <button
       onClick={onClick}
-      whileHover={{ scale: 1.02, x: 4 }}
-      whileTap={{ scale: 0.98 }}
       className={cn(
-        "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all",
+        "w-full flex items-center gap-3 px-3 py-2.5 rounded-[6px] text-sm font-medium transition-colors",
         active
-          ? "bg-primary text-white shadow-sm"
-          : "text-ink-600 hover:bg-ink-50 hover:text-ink-900",
-        highlight && !active && "text-accent-active hover:text-accent-active"
+          ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]"
+          : "text-[var(--vscode-fg-subtle)] hover:bg-[var(--vscode-list-hover)] hover:text-[var(--vscode-fg)]",
+        highlight && !active && "text-[var(--vscode-focus-border)]"
       )}
     >
-      <span className={active ? "text-white" : "text-ink-400"}>
+      <span className={active ? "text-[var(--vscode-list-active-fg)]" : "text-[var(--vscode-fg-subtle)]"}>
         {icon}
       </span>
       {label}
       {highlight && !active && (
-        <motion.span
-          animate={{ scale: [1, 1.2, 1] }}
-          transition={{ repeat: Infinity, duration: 2 }}
-          className="ml-auto h-2 w-2 rounded-full bg-accent-active"
-        />
+        <span className="ml-auto h-2 w-2 rounded-full bg-[var(--vscode-focus-border)]" />
       )}
-    </motion.button>
+    </button>
   );
 }
 

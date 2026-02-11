@@ -5,6 +5,7 @@ Converts Wiki text into structured Card Proposals
 
 from typing import Dict, Any, List
 from app.agents.base import BaseAgent
+from app.prompts import EXTRACTOR_SYSTEM_PROMPT, extractor_cards_prompt
 from app.schemas.draft import CardProposal
 import json
 
@@ -25,63 +26,15 @@ class ExtractorAgent(BaseAgent):
         return {"proposals": proposals}
 
     def get_system_prompt(self) -> str:
-        return """You are an Extractor agent for novel writing.
-
-Your responsibility:
-Extract key characters, locations, and concepts from Wiki pages and convert them into structured setting cards.
-
-Core principles:
-- Focus on information useful for creative writing (identity, appearance, personality, role).
-- Ignore detailed plot summaries, episode lists, or trivia.
-- Keep descriptions concise (2-5 sentences) but actionable.
-
-Output Format:
-- Generate JSON array of Card Proposals.
-- Each proposal must have: name, type (Character/World), description, rationale.
-"""
+        return EXTRACTOR_SYSTEM_PROMPT
 
     async def extract_cards(self, title: str, content: str, max_cards: int = 20) -> List[CardProposal]:
         """Extract card proposals from Wiki content."""
-        user_prompt = f"""Extract setting cards from the following Wiki page.
-
-Page Title: {title}
-
-Content:
-{content[:15000]}...
-
-Requirements:
-- Extract the MOST IMPORTANT entities (characters, locations, organizations, concepts).
-- Maximum {max_cards} cards.
-- You MUST create BOTH Character AND World cards when possible.
-
-TYPE CLASSIFICATION:
-- Character: Any person, creature, or sentient being with a name.
-- World: Any non-person entity (locations, organizations, concepts, artifacts, species).
-
-For EACH card, provide:
-- name: exact name
-- type: Character | World
-- description: concise, structured description that helps writing
-- rationale: why it matters for the story
-- confidence: 0.0-1.0
-
-Output strict JSON array format:
-[
-  {{
-    "name": "Character Name",
-    "type": "Character",
-    "description": "Identity, appearance, personality, role (2-5 sentences)",
-    "rationale": "Why important for writing",
-    "confidence": 0.9
-  }}
-]
-
-Output JSON ONLY. No markdown, no commentary.
-"""
+        prompt = extractor_cards_prompt(title=title, content=content, max_cards=max_cards)
 
         messages = self.build_messages(
-            system_prompt=self.get_system_prompt(),
-            user_prompt=user_prompt,
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
         )
 
         response = await self.call_llm(messages)

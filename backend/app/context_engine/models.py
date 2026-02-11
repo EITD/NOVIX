@@ -42,6 +42,7 @@ class ContextType(str, Enum):
     CHAPTER_SUMMARY = "chapter_summary"
     SCENE_BRIEF = "scene_brief"
     DRAFT = "draft"
+    TEXT_CHUNK = "text_chunk"
     
     # 行动性上下文 / Actionable Context
     TOOL_DEFINITION = "tool_definition"

@@ -14,6 +14,18 @@ from app.agents.base import BaseAgent
 from app.schemas.canon import Fact, TimelineEvent, CharacterState
 from app.schemas.draft import SceneBrief, ChapterSummary, CardProposal
 from app.schemas.volume import VolumeSummary
+from app.prompts import (
+    ARCHIVIST_SYSTEM_PROMPT,
+    FANFICTION_CARD_REPAIR_HINT_ENRICH_DESCRIPTION,
+    FANFICTION_CARD_REPAIR_HINT_STRICT_JSON,
+    archivist_canon_updates_prompt,
+    archivist_chapter_summary_prompt,
+    archivist_focus_characters_binding_prompt,
+    archivist_fanfiction_card_prompt,
+    archivist_fanfiction_card_repair_prompt,
+    archivist_style_profile_prompt,
+    archivist_volume_summary_prompt,
+)
 from app.services.llm_config_service import llm_config_service
 from app.utils.chapter_id import ChapterIDValidator, normalize_chapter_id
 from app.utils.logger import get_logger
@@ -35,26 +47,101 @@ class ArchivistAgent(BaseAgent):
         "chapter", "goal", "title",
     }
 
+    _SIMPLE_RELATION_FACT_RE = re.compile(
+        r"^(.{1,12})是(.{1,16})的(母亲|父亲|儿子|女儿|哥哥|姐姐|弟弟|妹妹|妻子|丈夫|恋人|朋友|同学|老师|学生|主人|仆人)[。.!?？]*$"
+    )
+    _FACT_DENSITY_HINTS = (
+        "规则", "禁忌", "代价", "必须", "不允许", "禁止", "承诺", "约定", "隐瞒", "秘密", "交易", "交换", "契约",
+        "决定", "发现", "暴露", "背叛", "威胁", "受伤", "病", "死亡", "失踪", "获得", "丢失", "准备", "购买",
+        "居住", "搬", "上学", "教育", "监护", "占有", "依赖", "恐惧", "愧疚", "同情", "惆怅",
+    )
+
+    def _normalize_fact_statement(self, statement: str) -> str:
+        text = str(statement or "").strip()
+        text = re.sub(r"\s+", "", text)
+        text = text.strip("。．.！!?？")
+        return text
+
+    def _is_simple_relation_fact(self, statement: str) -> bool:
+        text = self._normalize_fact_statement(statement)
+        return bool(self._SIMPLE_RELATION_FACT_RE.match(text))
+
+    def _score_fact_statement(self, statement: str) -> float:
+        text = str(statement or "").strip()
+        if not text:
+            return 0.0
+
+        score = 0.0
+        score += min(len(text) / 18.0, 2.0)
+        if any(p in text for p in ("，", "；", "：", "（", "）", "(", ")")):
+            score += 0.7
+        if re.search(r"\d", text):
+            score += 0.3
+        if any(h in text for h in self._FACT_DENSITY_HINTS):
+            score += 0.8
+        if self._is_simple_relation_fact(text):
+            score -= 0.6
+        return score
+
+    def _select_high_value_facts(
+        self,
+        candidates: List[Tuple[str, float]],
+        existing_statements: Optional[List[str]] = None,
+        limit: int = 5,
+    ) -> List[Tuple[str, float]]:
+        existing_norm = {self._normalize_fact_statement(s) for s in (existing_statements or []) if str(s or "").strip()}
+
+        uniq: List[Tuple[str, float]] = []
+        seen = set(existing_norm)
+        for raw_statement, confidence in candidates or []:
+            statement = str(raw_statement or "").strip()
+            if not statement:
+                continue
+            normalized = self._normalize_fact_statement(statement)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            uniq.append((statement, float(confidence)))
+
+        scored = [
+            {
+                "statement": statement,
+                "confidence": max(0.0, min(1.0, float(confidence))),
+                "score": self._score_fact_statement(statement),
+                "simple_relation": self._is_simple_relation_fact(statement),
+            }
+            for statement, confidence in uniq
+            if len(str(statement or "").strip()) >= 6
+        ]
+        scored.sort(key=lambda x: (-x["score"], -len(x["statement"]), x["statement"]))
+
+        primary = [item for item in scored if not item["simple_relation"]]
+        secondary = [item for item in scored if item["simple_relation"]]
+
+        selected: List[Dict[str, Any]] = []
+        for item in primary:
+            selected.append(item)
+            if len(selected) >= int(limit):
+                break
+
+        if len(selected) < int(limit):
+            max_rel = 1 if any(not s["simple_relation"] for s in selected) else int(limit)
+            rel_used = 0
+            for item in secondary:
+                if rel_used >= max_rel:
+                    break
+                selected.append(item)
+                rel_used += 1
+                if len(selected) >= int(limit):
+                    break
+
+        return [(item["statement"], item["confidence"]) for item in selected[: int(limit)]]
+
     def get_agent_name(self) -> str:
         return "archivist"
 
     def get_system_prompt(self) -> str:
-        return (
-            "You are an Archivist agent for novel writing.\n\n"
-            "Your responsibilities:\n"
-            "1. Maintain facts, timeline, and character states\n"
-            "2. Generate scene briefs for writers based on chapter goals\n"
-            "3. Detect conflicts between new content and existing canon\n"
-            "4. Ensure consistency across the story\n\n"
-            "Core principle:\n"
-            "- Chapter goal is the primary driver. Cards/canon are constraints and a knowledge base.\n"
-            "- Do NOT try to cover every card in every chapter. Select only what is relevant.\n"
-            "- Prefer clarity and actionability over completeness.\n\n"
-            "Output Format:\n"
-            "- Generate scene briefs in JSON format\n"
-            "- Include relevant context only (not exhaustive)\n"
-            "- Flag any conflicts or inconsistencies\n"
-        )
+        return ARCHIVIST_SYSTEM_PROMPT
 
     async def execute(self, project_id: str, chapter: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """Generate a scene brief for a chapter using algorithmic context."""
@@ -227,10 +314,28 @@ class ArchivistAgent(BaseAgent):
         current_chapter: str,
         limit: int,
     ) -> List[str]:
+        limit = max(int(limit or 0), 0)
+        if limit <= 0:
+            return []
+
         chapters = await self.draft_storage.list_chapters(project_id)
-        current_weight = ChapterIDValidator.calculate_weight(current_chapter)
+        if not chapters:
+            return []
+
+        canonical_current = str(current_chapter or "").strip()
+        if canonical_current in chapters:
+            index = chapters.index(canonical_current)
+            return chapters[max(0, index - limit) : index]
+
+        # 当前章节尚未创建：退化为权重比较，但保持 chapters 的既有顺序（包含自定义排序）。
+        try:
+            current_weight = ChapterIDValidator.calculate_weight(canonical_current)
+        except Exception:
+            return chapters[max(0, len(chapters) - limit) :]
+        if current_weight <= 0:
+            return chapters[max(0, len(chapters) - limit) :]
         previous = [ch for ch in chapters if ChapterIDValidator.calculate_weight(ch) < current_weight]
-        return previous[-limit:]
+        return previous[max(0, len(previous) - limit) :]
 
     async def _build_summary_blocks(self, project_id: str, chapters: List[str]) -> List[str]:
         blocks: List[str] = []
@@ -571,24 +676,44 @@ class ArchivistAgent(BaseAgent):
             )
         return proposals
 
+    def _sample_text_for_style_profile(self, sample_text: str, max_chars: int = 20000) -> str:
+        """
+        采样文风提炼用的文本片段。
+
+        目的：
+        - 避免超长正文导致中段信息被截断
+        - 让文风提炼同时“看到”开头/中段/结尾，提升稳定性
+        """
+        text = str(sample_text or "").strip()
+        if not text:
+            return ""
+        if max_chars <= 0 or len(text) <= max_chars:
+            return text
+
+        head_len = int(max_chars * 0.35)
+        tail_len = int(max_chars * 0.35)
+        mid_len = max_chars - head_len - tail_len
+
+        head = text[:head_len]
+        tail = text[-tail_len:] if tail_len > 0 else ""
+
+        mid_start = max(0, (len(text) // 2) - (mid_len // 2))
+        mid = text[mid_start : mid_start + mid_len] if mid_len > 0 else ""
+
+        parts = [p for p in [head, mid, tail] if p]
+        return "\n\n……\n\n".join(parts)
+
     async def extract_style_profile(self, sample_text: str) -> str:
         """Extract writing style guidance from sample text."""
         provider = self.gateway.get_provider_for_agent(self.get_agent_name())
         if provider == "mock":
             return ""
 
-        user_prompt = f"""请从示例文本中提炼“文风指导”。
-要求（先读完再输出）：
-- 用中文，结构化分条总结：视角/叙述人称、基调与情绪、节奏、用词/句式、意象与细节偏好。
-- 只给可操作的写作要点，不要复述原文剧情，不要出现人物姓名/专名。
-- 精炼但具体，每条一句。
-
-示例文本：
-{sample_text[:15000]}
-"""
+        sampled = self._sample_text_for_style_profile(sample_text, max_chars=20000)
+        prompt = archivist_style_profile_prompt(sample_text=sampled)
         messages = self.build_messages(
-            system_prompt=self.get_system_prompt(),
-            user_prompt=user_prompt,
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
             context_items=None,
         )
         response = await self.call_llm(messages)
@@ -605,22 +730,7 @@ class ArchivistAgent(BaseAgent):
                 "description": "",
             }
 
-        user_prompt = f"""你在把百科/词条页面转换为“设定卡”。
-只输出 JSON 对象，字段：name, type, description。type 取 Character 或 World。
-
-描述写法（至关重要，先读完再写）：
-- 中文，多句（3-6句），结构化地概括身份/外貌（如有）/性格/角色功能等核心特征，像人物小传。
-- 不要剧情复述；聚焦设定画像，覆盖全方位特征。
-- 不得抄袭原文，改写且避免任意12字连续重合；句子不可重复。
-- 忽略玩法/技能/版本/宣传等无关信息；忽略表格标题等噪声。
-- 默认用页面标题为 name，除非正文有更合适的正式名称。
-- 禁用任何“Title:”“Summary:”“Table”等标签字样。
-
-Page Title: {clean_title}
-
-Page Content:
-{clean_content[:24000]}
-"""
+        prompt = archivist_fanfiction_card_prompt(title=clean_title, content=clean_content)
 
         provider_id = self.gateway.get_provider_for_agent(self.get_agent_name())
         profile = llm_config_service.get_profile_by_id(provider_id) or {}
@@ -632,8 +742,8 @@ Page Content:
         )
 
         messages = self.build_messages(
-            system_prompt=self.get_system_prompt(),
-            user_prompt=user_prompt,
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
             context_items=None,
         )
 
@@ -649,7 +759,7 @@ Page Content:
                 parsed = await self._extract_fanfiction_json_from_content(
                     clean_title,
                     clean_content,
-                    hint="请严格输出JSON，描述需覆盖身份/外貌（如有）/性格/角色功能，多句完整描述，避免重复与抄袭。",
+                    hint=FANFICTION_CARD_REPAIR_HINT_STRICT_JSON,
                 )
 
             if not self._is_valid_fanfiction_payload(parsed, clean_content):
@@ -665,7 +775,7 @@ Page Content:
                 parsed = await self._extract_fanfiction_json_from_content(
                     name,
                     clean_content,
-                    hint="描述需涵盖身份、外貌（如有）、性格、角色功能等要点，多句完整描述，避免重复，确保具体。",
+                    hint=FANFICTION_CARD_REPAIR_HINT_ENRICH_DESCRIPTION,
                 )
                 if self._is_valid_fanfiction_payload(parsed, clean_content):
                     description = self._sanitize_fanfiction_description(str(parsed.get("description") or "").strip())
@@ -702,25 +812,10 @@ Page Content:
     ) -> Dict[str, Any]:
         if not content:
             return {}
-        extra_hint = f"\nAdditional Hint:\n{hint}\n" if hint else ""
-        repair_prompt = f"""Convert the following wiki content into a strict JSON object with fields: name, type, description.
-
-Rules:
-- Output JSON only. No extra text.
-- type must be Character or World.
-- description 必须是中文，多句完整描述（建议3-6句），覆盖身份/外貌/性格/角色功能等信息，句子不重复，务必具体。
-- Do NOT include labels like "Title:", "Summary:", "Table", "RawText".
-- Do NOT reuse any sequence of 12+ consecutive characters from the page.
-- 使用多句完整描述，覆盖身份、外貌（如有）、性格、角色功能等要点。
-{extra_hint}
-Page Title: {title}
-
-Page Content:
-{content[:24000]}
-"""
+        prompt = archivist_fanfiction_card_repair_prompt(title=title, content=content, hint=hint)
         messages = self.build_messages(
-            system_prompt=self.get_system_prompt(),
-            user_prompt=repair_prompt,
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
             context_items=None,
         )
         response = await self.call_llm(messages, max_tokens=1200)
@@ -939,42 +1034,191 @@ Page Content:
         except Exception:
             return {"facts": [], "timeline_events": [], "character_states": []}
 
+    async def bind_focus_characters(
+        self,
+        project_id: str,
+        chapter: str,
+        final_draft: str,
+        limit: int = 5,
+        max_candidates: int = 160,
+    ) -> List[str]:
+        """
+        Bind focus characters for a chapter via LLM during sync.
+
+        输出的是“重点角色（focus）”，用于后续检索 seeds 与 UI 展示。
+        强约束：不允许隐式主角，必须在正文中出现姓名或别名才可绑定。
+        """
+        provider = self.gateway.get_provider_for_agent(self.get_agent_name())
+        if provider == "mock":
+            return []
+
+        cleaned_text = str(final_draft or "")
+        if not cleaned_text.strip():
+            return []
+
+        catalog = await self._build_focus_character_catalog(project_id, cleaned_text)
+        if not catalog:
+            return []
+
+        prompt_candidates = catalog[:max_candidates]
+        prompt = archivist_focus_characters_binding_prompt(
+            chapter=chapter,
+            candidates=prompt_candidates,
+            final_draft=cleaned_text,
+            limit=limit,
+        )
+        messages = self.build_messages(
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
+            context_items=None,
+        )
+        response = await self.call_llm(messages)
+
+        focus_from_llm = self._parse_focus_characters_yaml(response)
+        focus_candidates = {item["name"]: item for item in prompt_candidates}
+        focus_names = self._filter_explicit_mentions(
+            cleaned_text,
+            [name for name in focus_from_llm if name in focus_candidates],
+            focus_candidates,
+        )
+
+        must_include = self._select_starred_mentions(catalog, cleaned_text, min_stars=3)
+        selected: List[str] = []
+        for name in must_include:
+            if name not in selected:
+                selected.append(name)
+            if len(selected) >= limit:
+                return selected[:limit]
+
+        for name in focus_names:
+            if name not in selected:
+                selected.append(name)
+            if len(selected) >= limit:
+                return selected[:limit]
+
+        # Fallback: explicit mentions sorted by (stars desc, mention_count desc)
+        mentioned = [item for item in catalog if item.get("mention_count", 0) > 0]
+        mentioned.sort(key=lambda x: (-int(x.get("stars") or 1), -int(x.get("mention_count") or 0), x.get("name") or ""))
+        for item in mentioned:
+            name = item.get("name") or ""
+            if not name or name in selected:
+                continue
+            selected.append(name)
+            if len(selected) >= limit:
+                break
+
+        return selected[:limit]
+
+    async def _build_focus_character_catalog(self, project_id: str, text: str) -> List[Dict[str, Any]]:
+        names = await self.card_storage.list_character_cards(project_id)
+        catalog: List[Dict[str, Any]] = []
+        if not names:
+            return catalog
+
+        for raw_name in names:
+            raw_name = str(raw_name or "").strip()
+            if not raw_name:
+                continue
+            card = await self.card_storage.get_character_card(project_id, raw_name)
+            if not card:
+                continue
+            aliases = [str(a).strip() for a in (card.aliases or []) if str(a).strip()]
+            tokens = list(dict.fromkeys([card.name] + aliases))
+            mention_count = sum(text.count(token) for token in tokens if token)
+            stars = card.stars if card.stars is not None else 1
+            catalog.append(
+                {
+                    "name": card.name,
+                    "aliases": aliases,
+                    "stars": int(stars) if stars is not None else 1,
+                    "mention_count": int(mention_count),
+                }
+            )
+
+        # Prefer important + mentioned characters, but keep deterministic ordering.
+        def sort_key(item: Dict[str, Any]):
+            return (-int(item.get("stars") or 1), -int(item.get("mention_count") or 0), str(item.get("name") or ""))
+
+        catalog.sort(key=sort_key)
+        return catalog
+
+    def _parse_focus_characters_yaml(self, response: str) -> List[str]:
+        if not response:
+            return []
+        cleaned = str(response).strip()
+        if "```" in cleaned:
+            # Be tolerant: strip code fences if any.
+            start = cleaned.find("```") + 3
+            end = cleaned.rfind("```")
+            if end > start:
+                cleaned = cleaned[start:end].strip()
+                if cleaned.lower().startswith("yaml"):
+                    cleaned = cleaned[4:].strip()
+
+        try:
+            data = yaml.safe_load(cleaned) or {}
+        except Exception:
+            return []
+
+        raw = data.get("focus_characters") or []
+        result: List[str] = []
+        for item in raw:
+            if isinstance(item, str):
+                name = item.strip()
+            elif isinstance(item, dict):
+                name = str(item.get("name") or item.get("character") or "").strip()
+            else:
+                name = str(item).strip()
+            if name and name not in result:
+                result.append(name)
+        return result
+
+    def _filter_explicit_mentions(
+        self,
+        text: str,
+        names: List[str],
+        candidates: Dict[str, Dict[str, Any]],
+    ) -> List[str]:
+        cleaned_text = text or ""
+        result: List[str] = []
+        for name in names or []:
+            meta = candidates.get(name) or {}
+            tokens = [name]
+            tokens.extend(meta.get("aliases") or [])
+            if any(token and token in cleaned_text for token in tokens):
+                if name not in result:
+                    result.append(name)
+        return result
+
+    def _select_starred_mentions(
+        self,
+        catalog: List[Dict[str, Any]],
+        text: str,
+        min_stars: int = 3,
+    ) -> List[str]:
+        cleaned_text = text or ""
+        hits = []
+        for item in catalog or []:
+            stars = int(item.get("stars") or 1)
+            if stars < min_stars:
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            tokens = [name]
+            tokens.extend(item.get("aliases") or [])
+            if not any(token and token in cleaned_text for token in tokens):
+                continue
+            hits.append((int(item.get("mention_count") or 0), name))
+        hits.sort(key=lambda x: (-x[0], x[1]))
+        return [name for _count, name in hits]
+
     async def _generate_canon_updates_yaml(self, chapter: str, final_draft: str) -> str:
         """Generate canon updates YAML via LLM."""
-        user_prompt = f"""从最终稿中提取可落库的“事实/时间线/角色状态”更新，输出 YAML。
-章节：{chapter}
-
-模板：
-```yaml
-facts:
-  - statement: <客观事实，精炼句子>
-    confidence: <0.0-1.0>
-timeline_events:
-  - time: <时间描述>
-    event: <发生了什么>
-    participants: [<角色1>, <角色2>]
-    location: <地点>
-character_states:
-  - character: <角色名>
-    goals: [<目标1>]
-    injuries: [<伤势1>]
-    inventory: [<物品1>]
-    relationships: {{ <他人>: <关系描述> }}
-    location: <当前位置>
-    emotional_state: <情绪>
-```
-
-规则：
-- 只写能从正文推断的客观信息；不捏造。
-- facts 以3-5条为宜，聚焦关键设定/剧情。
-- 不确定的字段留空或空列表。
-
-正文：
-""" + final_draft
-
+        prompt = archivist_canon_updates_prompt(chapter=chapter, final_draft=final_draft)
         messages = self.build_messages(
-            system_prompt=self.get_system_prompt(),
-            user_prompt=user_prompt,
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
             context_items=None,
         )
         response = await self.call_llm(messages)
@@ -1002,7 +1246,7 @@ character_states:
         existing_facts = await self.canon_storage.get_all_facts(project_id)
         next_fact_index = len(existing_facts) + 1
 
-        facts: List[Fact] = []
+        raw_facts: List[Tuple[str, float]] = []
         for item in data.get("facts", []) or []:
             statement = ""
             confidence = 1.0
@@ -1018,7 +1262,16 @@ character_states:
 
             if not statement.strip():
                 continue
+            raw_facts.append((statement.strip(), max(0.0, min(1.0, confidence))))
 
+        selected_facts = self._select_high_value_facts(
+            candidates=raw_facts,
+            existing_statements=[f.statement for f in (existing_facts or []) if getattr(f, "statement", None)],
+            limit=self.MAX_FACTS,
+        )
+
+        facts: List[Fact] = []
+        for statement, confidence in selected_facts:
             fact_id = f"F{next_fact_index:04d}"
             next_fact_index += 1
             facts.append(
@@ -1027,7 +1280,7 @@ character_states:
                     statement=statement.strip(),
                     source=chapter,
                     introduced_in=chapter,
-                    confidence=max(0.0, min(1.0, confidence)),
+                    confidence=max(0.0, min(1.0, float(confidence))),
                 )
             )
 
@@ -1078,37 +1331,14 @@ character_states:
         final_draft: str,
     ) -> str:
         """Generate ChapterSummary YAML via LLM."""
-        user_prompt = f"""请用 YAML 结构化生成本章“事实摘要”。
-章节：{chapter}
-标题：{chapter_title}
-
-严格匹配下列键名：
-```yaml
-chapter: {chapter}
-title: {chapter_title}
-word_count: <int>              # 估算字数即可
-key_events:                    # 3-5条，客观剧情节点
-  - <event1>
-new_facts:                     # 3-5条，关键设定/情节事实，避免琐碎小人物小事
-  - <fact1>
-character_state_changes:       # 主要人物的心理/关系/目标变化
-  - <change1>
-open_loops:                    # 未解决的悬念/伏笔
-  - <loop1>
-brief_summary: <一段话摘要，聚焦剧情与重要人物心理>
-```
-
-规则：
-- 只记录客观剧情与主要人物心理，不写无关路人或枝节。
-- 用中文，精炼但具体；避免抄全文。
-- 仅输出 YAML，无额外文本。
-
-正文：
-""" + final_draft
-
+        prompt = archivist_chapter_summary_prompt(
+            chapter=chapter,
+            chapter_title=chapter_title,
+            final_draft=final_draft,
+        )
         messages = self.build_messages(
-            system_prompt=self.get_system_prompt(),
-            user_prompt=user_prompt,
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
             context_items=None,
         )
 
@@ -1143,33 +1373,10 @@ brief_summary: <一段话摘要，聚焦剧情与重要人物心理>
                 }
             )
 
-        user_prompt = f"""Generate a structured volume summary in YAML.
-
-Volume: {volume_id}
-Chapter count: {len(chapter_summaries)}
-
-Chapter summaries JSON:
-{json.dumps(items, ensure_ascii=True)}
-
-Output YAML matching this schema:
-```yaml
-volume_id: {volume_id}
-brief_summary: <one paragraph summary>
-key_themes:
-  - <theme1>
-major_events:
-  - <event1>
-chapter_count: {len(chapter_summaries)}
-```
-
-Constraints:
-- Summaries must be concise and consistent.
-- Output YAML only, no extra text.
-"""
-
+        prompt = archivist_volume_summary_prompt(volume_id=volume_id, chapter_items=items)
         messages = self.build_messages(
-            system_prompt=self.get_system_prompt(),
-            user_prompt=user_prompt,
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
             context_items=None,
         )
 

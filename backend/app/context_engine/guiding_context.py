@@ -4,6 +4,8 @@ Guiding context builder.
 
 from typing import Optional, Dict, Any
 
+from app.prompts import GUIDING_OUTPUT_SCHEMAS, GUIDING_TASK_INSTRUCTIONS, guiding_agent_identity
+
 
 class GuidingContextBuilder:
     """Builds guiding context for agents."""
@@ -37,28 +39,13 @@ class GuidingContextBuilder:
         return "\n".join(components)
 
     def _get_agent_identity(self) -> str:
-        identities = {
-            "archivist": "你是 Archivist（资料管理员）。",
-            "writer": "你是 Writer（主笔）。",
-            "editor": "你是 Editor（编辑）。",
-        }
-        return identities.get(self.agent_name, f"你是 {self.agent_name} Agent。")
+        return guiding_agent_identity(self.agent_name)
 
     def _get_task_instruction(self, task_type: str) -> str:
-        instructions = {
-            "generate_brief": "生成场景简报并标注关键约束。",
-            "write": "根据场景简报撰写正文。",
-            "edit": "根据反馈进行最小改动的润色。",
-        }
-        return instructions.get(task_type, "")
+        return GUIDING_TASK_INSTRUCTIONS.get(task_type, "")
 
     def _get_output_schema(self, task_type: str) -> str:
-        schemas = {
-            "generate_brief": "输出 YAML 格式的 scene_brief。",
-            "write": "直接输出正文，不要附加解释。",
-            "edit": "输出修改后的正文与简要说明。",
-        }
-        return schemas.get(task_type, "")
+        return GUIDING_OUTPUT_SCHEMAS.get(task_type, "")
 
     def _format_style_card(self, style_card: Dict[str, Any]) -> str:
         if isinstance(style_card, dict):

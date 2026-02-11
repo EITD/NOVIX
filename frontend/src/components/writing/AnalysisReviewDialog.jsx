@@ -3,6 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button, Card, Input } from '../ui/core';
 import { X, Trash2, Plus, CheckSquare } from 'lucide-react';
 
+/**
+ * AnalysisReviewDialog - 分析结果确认弹窗
+ * 仅做视觉一致性优化，不改变数据与交互逻辑。
+ */
 const emptySummary = {
   chapter: '',
   volume_id: 'V1',
@@ -141,32 +145,33 @@ export default function AnalysisReviewDialog({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 z-40"
+            className="fixed inset-0 bg-black/20 z-40"
           />
           <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.96 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            initial={{ opacity: 0, y: 8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 anti-theme"
           >
-            <Card className="w-full max-w-6xl max-h-[85vh] p-6 flex flex-col overflow-hidden">
-              <div className="flex items-start justify-between gap-4">
+            <Card className="w-full max-w-6xl max-h-[85vh] p-0 flex flex-col overflow-hidden bg-[var(--vscode-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-sidebar-border)] rounded-[6px] shadow-none">
+              <div className="px-6 py-5 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)] flex items-start justify-between gap-4">
                 <div className="space-y-1">
-                  <h2 className="text-xl font-bold text-ink-900">分析结果确认</h2>
-                  <p className="text-sm text-ink-500">可在保存前微调摘要、事实与设定卡。</p>
+                  <h2 className="text-xl font-bold text-[var(--vscode-fg)]">分析结果确认</h2>
+                  <p className="text-sm text-[var(--vscode-fg-subtle)]">可在保存前微调摘要、事实与设定卡。</p>
                 </div>
                 <button
                   onClick={onCancel}
-                  className="p-2 rounded-md hover:bg-ink-100 text-ink-400 hover:text-ink-700"
+                  className="p-2 rounded-[6px] hover:bg-[var(--vscode-list-hover)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] transition-none"
                   title="关闭"
                 >
                   <X size={16} />
                 </button>
               </div>
 
-              <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4 overflow-hidden mt-4">
-                <div className="border border-border rounded-md bg-surface/50 p-2 overflow-y-auto">
-                  <div className="text-xs font-bold text-ink-500 px-2 py-1">章节列表</div>
+              <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4 overflow-hidden p-6">
+                <div className="border border-[var(--vscode-sidebar-border)] rounded-[6px] bg-[var(--vscode-bg)] p-2 overflow-y-auto custom-scrollbar">
+                  <div className="text-xs font-bold text-[var(--vscode-fg-subtle)] px-2 py-1">章节列表</div>
                   <div className="space-y-1 mt-2">
                     {chapterList.map((item) => {
                       const active = item.chapter === currentChapter;
@@ -175,13 +180,13 @@ export default function AnalysisReviewDialog({
                           key={item.chapter}
                           onClick={() => setCurrentChapter(item.chapter)}
                           className={
-                            `w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ` +
+                            `w-full flex items-center gap-2 px-2 py-1.5 rounded-[6px] text-xs transition-none ` +
                             (active
-                              ? 'bg-primary/10 text-ink-900 border border-primary/30'
-                              : 'text-ink-600 hover:bg-ink-50')
+                              ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]'
+                              : 'text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)]')
                           }
                         >
-                          <CheckSquare size={12} className={active ? 'text-primary' : 'text-ink-300'} />
+                          <CheckSquare size={12} className={active ? 'text-[var(--vscode-list-active-fg)]' : 'text-[var(--vscode-fg-subtle)]'} />
                           <span className="font-mono text-[11px]">{item.chapter}</span>
                           <span className="truncate">{item.title || '未命名章节'}</span>
                         </button>
@@ -191,11 +196,11 @@ export default function AnalysisReviewDialog({
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-4 overflow-hidden">
-                  <div className="space-y-4 overflow-y-auto pr-2 min-h-0">
+                  <div className="space-y-4 overflow-y-auto pr-2 min-h-0 custom-scrollbar">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-bold text-ink-800">章节摘要</h3>
-                        <span className="text-[10px] text-ink-400">不可删除</span>
+                        <h3 className="text-sm font-bold text-[var(--vscode-fg)]">章节摘要</h3>
+                        <span className="text-[10px] text-[var(--vscode-fg-subtle)]">不可删除</span>
                       </div>
                       <textarea
                         value={current.summary?.brief_summary || ''}
@@ -203,19 +208,19 @@ export default function AnalysisReviewDialog({
                           updateCurrent({ summary: { ...current.summary, brief_summary: e.target.value } })
                         }
                         placeholder="暂无摘要"
-                        className="w-full min-h-[140px] text-sm bg-surface/70 border border-border rounded-md px-3 py-2 focus:outline-none focus:border-primary"
+                        className="w-full min-h-[140px] text-sm bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] rounded-[6px] px-3 py-2 text-[var(--vscode-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none"
                       />
                     </div>
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-bold text-ink-800">事实</h3>
-                          <span className="text-[10px] text-ink-400">建议 3-5 条</span>
+                          <h3 className="text-sm font-bold text-[var(--vscode-fg)]">事实</h3>
+                          <span className="text-[10px] text-[var(--vscode-fg-subtle)]">建议 3-5 条</span>
                         </div>
                         <button
                           onClick={addFact}
-                          className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary-hover disabled:opacity-40"
+                          className="inline-flex items-center gap-1 text-xs text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] px-2 py-1 rounded-[4px] disabled:opacity-40"
                           disabled={current.facts.length >= 5}
                         >
                           <Plus size={12} />
@@ -223,7 +228,7 @@ export default function AnalysisReviewDialog({
                         </button>
                       </div>
                       {current.facts.length === 0 ? (
-                        <div className="text-xs text-ink-400 border border-dashed border-border rounded-md px-3 py-2">
+                        <div className="text-xs text-[var(--vscode-fg-subtle)] border border-dashed border-[var(--vscode-sidebar-border)] rounded-[6px] px-3 py-2">
                           暂无事实
                         </div>
                       ) : (
@@ -234,11 +239,11 @@ export default function AnalysisReviewDialog({
                                 value={fact.statement || ''}
                                 onChange={(e) => updateFact(idx, e.target.value)}
                                 placeholder="填写事实内容"
-                                className="bg-surface/70 text-sm"
+                                className="bg-[var(--vscode-input-bg)] border-[var(--vscode-input-border)] text-sm text-[var(--vscode-fg)] focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-[var(--vscode-focus-border)]"
                               />
                               <button
                                 onClick={() => removeFact(idx)}
-                                className="p-2 rounded-md hover:bg-red-50 text-red-500"
+                                className="p-2 rounded-[6px] hover:bg-red-50 text-red-500"
                                 title="移除"
                               >
                                 <Trash2 size={14} />
@@ -250,37 +255,37 @@ export default function AnalysisReviewDialog({
                     </div>
                   </div>
 
-                  <div className="space-y-3 overflow-y-auto pr-1 min-h-0">
+                  <div className="space-y-3 overflow-y-auto pr-1 min-h-0 custom-scrollbar">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-bold text-ink-800">新增设定卡</h3>
-                      <span className="text-[10px] text-ink-400">可编辑/删除</span>
+                      <h3 className="text-sm font-bold text-[var(--vscode-fg)]">新增设定卡</h3>
+                      <span className="text-[10px] text-[var(--vscode-fg-subtle)]">可编辑/删除</span>
                     </div>
                     {current.proposals.length === 0 ? (
-                      <div className="text-xs text-ink-400 border border-dashed border-border rounded-md px-3 py-2">
+                      <div className="text-xs text-[var(--vscode-fg-subtle)] border border-dashed border-[var(--vscode-sidebar-border)] rounded-[6px] px-3 py-2">
                         暂无新增设定
                       </div>
                     ) : (
                       <div className="space-y-3">
                         {current.proposals.map((item, idx) => (
-                          <div key={`${item.name || 'proposal'}-${idx}`} className="border border-border rounded-md p-3 bg-surface/70 space-y-2">
+                          <div key={`${item.name || 'proposal'}-${idx}`} className="border border-[var(--vscode-sidebar-border)] rounded-[6px] p-3 bg-[var(--vscode-input-bg)] space-y-2">
                             <div className="flex items-center gap-2">
                               <Input
                                 value={item.name || ''}
                                 onChange={(e) => updateProposal(idx, { name: e.target.value })}
                                 placeholder="设定名称"
-                                className="bg-background text-sm"
+                                className="bg-[var(--vscode-input-bg)] border-[var(--vscode-input-border)] text-sm text-[var(--vscode-fg)] focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-[var(--vscode-focus-border)]"
                               />
                               <select
                                 value={item.type || 'Character'}
                                 onChange={(e) => updateProposal(idx, { type: e.target.value })}
-                                className="h-10 rounded-md border border-border bg-background text-xs px-2"
+                                className="h-10 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] text-xs px-2 text-[var(--vscode-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)]"
                               >
                                 <option value="Character">角色</option>
                                 <option value="World">世界</option>
                               </select>
                               <button
                                 onClick={() => removeProposal(idx)}
-                                className="p-2 rounded-md hover:bg-red-50 text-red-500"
+                                className="p-2 rounded-[6px] hover:bg-red-50 text-red-500"
                                 title="移除"
                               >
                                 <Trash2 size={14} />
@@ -290,13 +295,13 @@ export default function AnalysisReviewDialog({
                               value={item.description || ''}
                               onChange={(e) => updateProposal(idx, { description: e.target.value })}
                               placeholder="设定描述"
-                              className="w-full min-h-[80px] text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:border-primary"
+                              className="w-full min-h-[80px] text-sm bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] rounded-[6px] px-3 py-2 text-[var(--vscode-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none"
                             />
                             <textarea
                               value={item.rationale || ''}
                               onChange={(e) => updateProposal(idx, { rationale: e.target.value })}
                               placeholder="必要性/理由"
-                              className="w-full min-h-[60px] text-xs bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:border-primary"
+                              className="w-full min-h-[60px] text-xs bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] rounded-[6px] px-3 py-2 text-[var(--vscode-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none"
                             />
                           </div>
                         ))}
@@ -306,9 +311,20 @@ export default function AnalysisReviewDialog({
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-border">
-                <Button variant="ghost" onClick={onCancel} disabled={saving}>取消</Button>
-                <Button onClick={handleSave} disabled={saving}>
+              <div className="flex justify-end gap-3 px-6 py-4 border-t border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
+                <Button
+                  variant="ghost"
+                  onClick={onCancel}
+                  disabled={saving}
+                  className="h-8 px-3 text-xs rounded-[4px] border border-[var(--vscode-input-border)] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] shadow-none"
+                >
+                  取消
+                </Button>
+                <Button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="h-8 px-3 text-xs rounded-[4px] bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 shadow-none"
+                >
                   {saving ? '保存中...' : '保存并入库'}
                 </Button>
               </div>

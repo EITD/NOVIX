@@ -1,260 +1,213 @@
-import React, { useEffect, useState } from 'react';
-import { X, BookOpen, Sparkles, Drama } from 'lucide-react';
-import { Button, Card, Input } from '../ui/core';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { cn } from '../ui/core';
 
 /**
- * ChapterCreateDialog - 章节创建对话框
- *
- * 支持创建：
- * - 正文章节 (C1, C2, ...)
- * - 番外章节 (C3E1, C3E2, ...)
- * - 幕间章节 (C2I1, C2I2, ...)
+ * ChapterCreateDialog - 新建章节弹窗
+ * 仅做视觉一致性优化，不改变数据与交互逻辑。
  */
 export function ChapterCreateDialog({
-  open,
-  onClose,
-  onConfirm,
-  existingChapters = [],
-  volumes = [],
-  defaultVolumeId = 'V1',
+    open,
+    onClose,
+    onConfirm,
+    existingChapters = [],
+    volumes = [],
+    defaultVolumeId = 'V1',
 }) {
-  const [chapterType, setChapterType] = useState('normal');
-  const [selectedVolume, setSelectedVolume] = useState('V1');
-  const [insertAfter, setInsertAfter] = useState('');
-  const [suggestedId, setSuggestedId] = useState('');
-  const [customId, setCustomId] = useState('');
-  const [title, setTitle] = useState('');
+    const [chapterType, setChapterType] = useState('normal');
+    const [selectedVolume, setSelectedVolume] = useState('V1');
+    const [insertAfter, setInsertAfter] = useState('');
+    const [suggestedId, setSuggestedId] = useState('');
+    const [customId, setCustomId] = useState('');
+    const [title, setTitle] = useState('');
 
-  const availableVolumes = volumes.length ? volumes : [{ id: 'V1', title: '第一卷' }];
+    // 逻辑保持不变
+    const availableVolumes = volumes.length ? volumes : [{ id: 'V1', title: '第一卷' }];
 
-  const normalizeToVolume = (chapterId, volumeId) => {
-    const trimmed = (chapterId || '').trim().toUpperCase();
-    if (!trimmed) {
-      return '';
-    }
-    if (trimmed.startsWith('V')) {
-      return trimmed;
-    }
-    if (trimmed.startsWith('C')) {
-      return `${volumeId}${trimmed}`;
-    }
-    return trimmed;
-  };
+    const normalizeToVolume = (chapterId, volumeId) => {
+        const trimmed = (chapterId || '').trim().toUpperCase();
+        if (!trimmed) return '';
+        if (trimmed.startsWith('V')) return trimmed;
+        if (trimmed.startsWith('C')) return `${volumeId}${trimmed}`;
+        return trimmed;
+    };
 
-  const parseVolumeId = (chapterId) => {
-    const match = (chapterId || '').toUpperCase().match(/^V(\d+)/);
-    return match ? `V${match[1]}` : 'V1';
-  };
+    const parseVolumeId = (chapterId) => {
+        const match = (chapterId || '').toUpperCase().match(/^V(\d+)/);
+        return match ? `V${match[1]}` : 'V1';
+    };
 
-  const normalizedChapters = existingChapters.map((chapter) => {
-    const volumeId = parseVolumeId(chapter.id);
-    const normalizedId = normalizeToVolume(chapter.id, volumeId);
-    return { ...chapter, volumeId, normalizedId };
-  });
+    const normalizedChapters = existingChapters.map((chapter) => {
+        const volumeId = parseVolumeId(chapter.id);
+        const normalizedId = normalizeToVolume(chapter.id, volumeId);
+        return { ...chapter, volumeId, normalizedId };
+    });
 
-  useEffect(() => {
-    if (!open) return;
-    let suggested = '';
-
-    if (chapterType === 'normal') {
-      const normalChapters = normalizedChapters.filter(
-        (chapter) => chapter.volumeId === selectedVolume && /C\d+$/i.test(chapter.normalizedId)
-      );
-      let maxChapter = 0;
-      normalChapters.forEach((chapter) => {
-        const match = chapter.normalizedId.match(/C(\d+)/i);
-        if (match) {
-          maxChapter = Math.max(maxChapter, Number.parseInt(match[1], 10));
+    useEffect(() => {
+        if (!open) return;
+        let suggested = '';
+        if (chapterType === 'normal') {
+            const normalChapters = normalizedChapters.filter(
+                (chapter) => chapter.volumeId === selectedVolume && /C\d+$/i.test(chapter.normalizedId)
+            );
+            let maxChapter = 0;
+            normalChapters.forEach((chapter) => {
+                const match = chapter.normalizedId.match(/C(\d+)/i);
+                if (match) maxChapter = Math.max(maxChapter, Number.parseInt(match[1], 10));
+            });
+            suggested = `${selectedVolume}C${maxChapter + 1}`;
+        } else if (chapterType === 'extra' && insertAfter) {
+            const extraCount = normalizedChapters.filter(
+                (chapter) => chapter.normalizedId.startsWith(insertAfter) && chapter.normalizedId.toUpperCase().includes('E')
+            ).length;
+            suggested = `${insertAfter}E${extraCount + 1}`;
+        } else if (chapterType === 'interlude' && insertAfter) {
+            const interludeCount = normalizedChapters.filter(
+                (chapter) => chapter.normalizedId.startsWith(insertAfter) && chapter.normalizedId.toUpperCase().includes('I')
+            ).length;
+            suggested = `${insertAfter}I${interludeCount + 1}`;
         }
-      });
-      suggested = `${selectedVolume}C${maxChapter + 1}`;
-    } else if (chapterType === 'extra' && insertAfter) {
-      const extraCount = normalizedChapters.filter(
-        (chapter) =>
-          chapter.normalizedId.startsWith(insertAfter) &&
-          chapter.normalizedId.toUpperCase().includes('E')
-      ).length;
-      suggested = `${insertAfter}E${extraCount + 1}`;
-    } else if (chapterType === 'interlude' && insertAfter) {
-      const interludeCount = normalizedChapters.filter(
-        (chapter) =>
-          chapter.normalizedId.startsWith(insertAfter) &&
-          chapter.normalizedId.toUpperCase().includes('I')
-      ).length;
-      suggested = `${insertAfter}I${interludeCount + 1}`;
-    }
+        setSuggestedId(suggested);
+        setCustomId('');
+    }, [chapterType, insertAfter, normalizedChapters, open, selectedVolume]);
 
-    setSuggestedId(suggested);
-    setCustomId('');
-  }, [chapterType, insertAfter, normalizedChapters, open, selectedVolume]);
+    useEffect(() => {
+        if (open) {
+            setChapterType('normal');
+            setInsertAfter('');
+            setTitle('');
+            setCustomId('');
+            const fallback = availableVolumes[0]?.id || 'V1';
+            const target = availableVolumes.find((v) => v.id === defaultVolumeId) ? defaultVolumeId : fallback;
+            setSelectedVolume(target);
+        }
+    }, [availableVolumes, defaultVolumeId, open]);
 
-  useEffect(() => {
-    if (open) {
-      setChapterType('normal');
-      setInsertAfter('');
-      setTitle('');
-      setCustomId('');
-      const fallback = availableVolumes[0]?.id || 'V1';
-      const target = availableVolumes.find((volume) => volume.id === defaultVolumeId)
-        ? defaultVolumeId
-        : fallback;
-      setSelectedVolume(target);
-    }
-  }, [availableVolumes, defaultVolumeId, open]);
+    useEffect(() => {
+        if (chapterType !== 'normal') setInsertAfter('');
+    }, [chapterType, selectedVolume]);
 
-  useEffect(() => {
-    if (chapterType !== 'normal') {
-      setInsertAfter('');
-    }
-  }, [chapterType, selectedVolume]);
+    const rawId = customId || suggestedId;
+    const finalId = normalizeToVolume(rawId, selectedVolume);
+    const canCreate = Boolean(title && finalId);
+    const normalChapters = normalizedChapters.filter(
+        (chapter) => chapter.volumeId === selectedVolume && /C\d+$/i.test(chapter.normalizedId)
+    );
 
-  if (!open) return null;
+    if (!open) return null;
 
-  const rawId = customId || suggestedId;
-  const finalId = normalizeToVolume(rawId, selectedVolume);
-  const canCreate = Boolean(title && finalId);
-  const normalChapters = normalizedChapters.filter(
-    (chapter) => chapter.volumeId === selectedVolume && /C\d+$/i.test(chapter.normalizedId)
-  );
+    return createPortal(
+        <>
+            {/* 简洁遮罩 */}
+            <div className="fixed inset-0 z-[100]" onClick={onClose} />
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
-      <Card className="w-full max-w-md bg-surface shadow-2xl">
-        <div className="flex items-center justify-between p-6 border-b border-border bg-gray-50/50">
-          <h3 className="text-lg font-bold text-ink-900">创建新章节</h3>
-          <Button variant="ghost" size="icon" onClick={onClose}>
-            <X size={18} />
-          </Button>
-        </div>
+            {/* 命令面板 */}
+            <div className="vscode-command-palette anti-theme z-[101]">
+                <div className="bg-[var(--vscode-input-bg)] p-1">
+                    <div className="px-2 py-1.5 text-xs text-[var(--vscode-fg-subtle)] font-bold uppercase tracking-wider border-b border-[var(--vscode-input-border)] mb-2">
+                        新建章节
+                    </div>
 
-        <div className="p-6 space-y-6">
-          <div className="space-y-3">
-            <label className="text-xs font-bold text-ink-500 uppercase tracking-wider">
-              章节类型
-            </label>
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { id: 'normal', icon: BookOpen, label: '正文', color: 'text-ink-600' },
-                { id: 'extra', icon: Sparkles, label: '番外', color: 'text-amber-500' },
-                { id: 'interlude', icon: Drama, label: '幕间', color: 'text-blue-500' },
-              ].map(({ id, icon: Icon, label, color }) => (
-                <label
-                  key={id}
-                  className={`flex flex-col items-center justify-center p-3 border rounded-lg cursor-pointer transition-all ${
-                    chapterType === id
-                      ? 'border-primary bg-primary/5 shadow-sm'
-                      : 'border-border hover:border-primary/30 hover:bg-surface-hover'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="type"
-                    value={id}
-                    checked={chapterType === id}
-                    onChange={(e) => setChapterType(e.target.value)}
-                    className="sr-only"
-                  />
-                  <Icon size={20} className={`mb-2 ${color}`} />
-                  <span
-                    className={`text-xs font-medium ${
-                      chapterType === id ? 'text-primary' : 'text-ink-600'
-                    }`}
-                  >
-                    {label}
-                  </span>
-                </label>
-              ))}
+                    <div className="space-y-3 px-2 pb-3">
+                        {/* 类型选择 */}
+                        <div className="flex gap-1 bg-[var(--vscode-sidebar-bg)] p-1 rounded-[var(--radius-sm)]">
+                            {[
+                                { id: 'normal', label: '正文' },
+                                { id: 'extra', label: '番外' },
+                                { id: 'interlude', label: '幕间' }
+                            ].map(t => (
+                                <button
+                                    key={t.id}
+                                    onClick={() => setChapterType(t.id)}
+                                    className={cn(
+                                        "flex-1 text-[11px] py-1 rounded-[var(--radius-sm)] transition-none",
+                                        chapterType === t.id
+                                            ? "bg-[var(--vscode-bg)] text-[var(--vscode-fg)] shadow-sm font-medium"
+                                            : "text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]"
+                                    )}
+                                >
+                                    {t.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* 分卷选择 */}
+                        <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                            <label className="text-[11px] text-right text-[var(--vscode-fg-subtle)]">分卷：</label>
+                            <select
+                                value={selectedVolume}
+                                onChange={(e) => setSelectedVolume(e.target.value)}
+                                className="w-full text-xs bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] px-2 py-1 outline-none focus:border-[var(--vscode-focus-border)]"
+                            >
+                                {availableVolumes.map(v => (
+                                    <option key={v.id} value={v.id}>{v.id} - {v.title}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* 插入位置 */}
+                        {chapterType !== 'normal' && (
+                            <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                                <label className="text-[11px] text-right text-[var(--vscode-fg-subtle)]">插入到：</label>
+                                <select
+                                    value={insertAfter}
+                                    onChange={(e) => setInsertAfter(e.target.value)}
+                                    className="w-full text-xs bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] px-2 py-1 outline-none focus:border-[var(--vscode-focus-border)]"
+                                >
+                                    <option value="">-- 请选择章节 --</option>
+                                    {normalChapters.map(c => (
+                                        <option key={c.normalizedId} value={c.normalizedId}>{c.normalizedId} {c.title}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {/* 编号输入 */}
+                        <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                            <label className="text-[11px] text-right text-[var(--vscode-fg-subtle)]">编号：</label>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    value={customId}
+                                    onChange={(e) => setCustomId(e.target.value.toUpperCase())}
+                                    placeholder={suggestedId}
+                                    className="w-24 text-xs font-mono bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] px-2 py-1 outline-none focus:border-[var(--vscode-focus-border)]"
+                                />
+                                <span className="text-[10px] text-[var(--vscode-fg-subtle)]">结果：{finalId}</span>
+                            </div>
+                        </div>
+
+                        {/* 标题输入 */}
+                        <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                            <label className="text-[11px] text-right text-[var(--vscode-fg-subtle)]">标题：</label>
+                            <input
+                                value={title}
+                                onChange={(e) => setTitle(e.target.value)}
+                                placeholder="请输入章节标题..."
+                                className="w-full text-xs font-bold bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] px-2 py-1 outline-none focus:border-[var(--vscode-focus-border)]"
+                                autoFocus
+                            />
+                        </div>
+                    </div>
+
+                    {/* 底部操作 */}
+                    <div className="flex justify-end gap-2 p-2 border-t border-[var(--vscode-input-border)] bg-[var(--vscode-sidebar-bg)]">
+                        <button
+                            onClick={onClose}
+                            className="px-3 py-1 text-xs border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] hover:bg-[var(--vscode-list-hover)]"
+                        >
+                            取消
+                        </button>
+                        <button
+                            onClick={() => { if (canCreate) { onConfirm({ id: finalId, title, type: chapterType }); onClose(); } }}
+                            disabled={!canCreate}
+                            className="px-3 py-1 text-xs text-white bg-[var(--vscode-list-active)] hover:opacity-90 disabled:opacity-50"
+                        >
+                            创建
+                        </button>
+                    </div>
+                </div>
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-ink-500 uppercase">分卷</label>
-            <select
-              value={selectedVolume}
-              onChange={(e) => setSelectedVolume(e.target.value)}
-              className="w-full px-3 py-2 border border-border rounded bg-white text-ink-900 text-sm focus:outline-none focus:border-primary transition-colors cursor-pointer"
-            >
-              {availableVolumes.map((volume) => (
-                <option key={volume.id} value={volume.id}>
-                  {volume.id} {volume.title ? `- ${volume.title}` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {chapterType !== 'normal' && (
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-ink-500 uppercase">插入位置</label>
-              <select
-                value={insertAfter}
-                onChange={(e) => setInsertAfter(e.target.value)}
-                className="w-full px-3 py-2 border border-border rounded bg-white text-ink-900 text-sm focus:outline-none focus:border-primary transition-colors cursor-pointer"
-              >
-                <option value="">请选择章节...</option>
-                {normalChapters.map((chapter) => (
-                  <option key={chapter.normalizedId} value={chapter.normalizedId}>
-                    在 {chapter.normalizedId} 之后 - {chapter.title || '未命名'}
-                  </option>
-                ))}
-              </select>
-              {!insertAfter && normalChapters.length > 0 && (
-                <p className="text-xs text-ink-400">选择要插入在哪个章节之后</p>
-              )}
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-ink-500 uppercase">章节编号</label>
-            <div className="space-y-1">
-              <Input
-                value={customId || suggestedId}
-                onChange={(e) => setCustomId(e.target.value.toUpperCase())}
-                placeholder="使用建议编号或手动输入"
-                className="font-mono"
-              />
-              {suggestedId && (
-                <p className="text-xs text-ink-400">
-                  系统建议:{' '}
-                  <span className="font-mono font-medium text-primary">{suggestedId}</span>
-                </p>
-              )}
-              {customId && !customId.toUpperCase().startsWith('V') && (
-                <p className="text-xs text-ink-400">
-                  将自动归入 <span className="font-mono text-primary">{selectedVolume}</span>
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-ink-500 uppercase">章节标题</label>
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="例如：第一章 初入京城"
-              className="font-serif"
-            />
-          </div>
-        </div>
-
-        <div className="flex gap-3 p-6 border-t border-border bg-gray-50">
-          <Button variant="ghost" onClick={onClose} className="flex-1">
-            取消
-          </Button>
-          <Button
-            onClick={() => {
-              if (canCreate) {
-                onConfirm({ id: finalId, title, type: chapterType });
-                onClose();
-              }
-            }}
-            className="flex-1"
-            disabled={!canCreate}
-          >
-            创建章节
-          </Button>
-        </div>
-      </Card>
-    </div>
-  );
+        </>,
+        document.body
+    )
 }

@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 from app.llm_gateway import LLMGateway
 from app.storage import CardStorage, CanonStorage, DraftStorage
 from app.context_engine.trace_collector import trace_collector, TraceEventType
+from app.prompts import base_agent_system_prompt, format_context_message
 
 
 class BaseAgent(ABC):
@@ -78,13 +79,14 @@ class BaseAgent(ABC):
         Returns:
             System prompt / 系统提示词
         """
-        return f"You are a {self.get_agent_name()} agent for novel writing."
+        return base_agent_system_prompt(self.get_agent_name())
     
     async def call_llm(
         self,
         messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        config_agent: Optional[str] = None,
     ) -> str:
         """
         Call LLM with agent-specific configuration
@@ -97,7 +99,7 @@ class BaseAgent(ABC):
         Returns:
             LLM response content / 大模型响应内容
         """
-        agent_name = self.get_agent_name()
+        agent_name = config_agent or self.get_agent_name()
         provider = self.gateway.get_provider_for_agent(agent_name)
         
         if temperature is None:
@@ -142,6 +144,7 @@ class BaseAgent(ABC):
                 {
                     "model": response.get("model", "unknown"),
                     "provider": response.get("provider", "unknown"),
+                    "config_agent": agent_name,
                     "tokens": {
                         "total": total_tokens,
                         "prompt": prompt_tokens,
@@ -178,12 +181,26 @@ class BaseAgent(ABC):
         if temperature is None:
             temperature = self.gateway.get_temperature_for_agent(agent_name)
         
-        async for chunk in self.gateway.stream_chat(
-            messages=messages,
-            provider=provider,
-            temperature=temperature
-        ):
-            yield chunk
+        has_chunk = False
+        try:
+            async for chunk in self.gateway.stream_chat(
+                messages=messages,
+                provider=provider,
+                temperature=temperature
+            ):
+                if chunk:
+                    has_chunk = True
+                yield chunk
+        except Exception:
+            if has_chunk:
+                raise
+            # Fallback to non-streaming to avoid hard failures on upstream chunked reads.
+            response = await self.gateway.chat(
+                messages=messages,
+                provider=provider,
+                temperature=temperature
+            )
+            yield response.get("content", "")
     
     def build_messages(
         self,
@@ -209,10 +226,9 @@ class BaseAgent(ABC):
         
         # Add context if provided / 添加上下文
         if context_items:
-            context_text = "\n\n".join(context_items)
             messages.append({
                 "role": "user",
-                "content": f"Context:\n{context_text}"
+                "content": format_context_message(context_items)
             })
         
         # Add main user prompt / 添加主要用户提示

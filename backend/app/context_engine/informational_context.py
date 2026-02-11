@@ -143,7 +143,8 @@ class InformationalContextManager:
             ContextType.TIMELINE_EVENT: "时间线",
             ContextType.CHAPTER_SUMMARY: "前文摘要",
             ContextType.SCENE_BRIEF: "场景简报",
-            ContextType.DRAFT: "草稿"
+            ContextType.DRAFT: "草稿",
+            ContextType.TEXT_CHUNK: "正文片段"
         }
         return section_map.get(type, type.value)
     
@@ -155,6 +156,10 @@ class InformationalContextManager:
             return f"- {item.content}"
         elif item.type == ContextType.TIMELINE_EVENT:
             return f"- {item.id}: {item.content}"
+        elif item.type == ContextType.TEXT_CHUNK:
+            chapter = item.metadata.get("chapter") or ""
+            prefix = f"[{chapter}] " if chapter else ""
+            return f"{prefix}{item.content}"
         else:
             return f"\n{item.content}\n"
     

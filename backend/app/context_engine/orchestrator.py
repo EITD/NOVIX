@@ -113,7 +113,7 @@ class ContextOrchestrator:
             retrieved_items = await self.select.retrieval_select(
                 project_id,
                 query,
-                item_types=["character", "world", "fact"],
+                item_types=["character", "world", "fact", "text_chunk"],
                 storage=self.storage,
                 top_k=10
             )
@@ -207,6 +207,33 @@ class ContextOrchestrator:
                             "dialogue": {"type": "string"}
                         },
                         "required": ["character_name", "dialogue"]
+                    }
+                ),
+                ToolDefinition(
+                    name="search_evidence",
+                    description="Search facts/summaries/cards/memory/text chunks for evidence.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "queries": {"type": "array", "items": {"type": "string"}},
+                            "types": {"type": "array", "items": {"type": "string"}},
+                            "limit": {"type": "integer", "default": 8}
+                        },
+                        "required": ["queries"]
+                    }
+                ),
+                ToolDefinition(
+                    name="search_text_chunks",
+                    description="Search narrative text chunks in drafts.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "chapters": {"type": "array", "items": {"type": "string"}},
+                            "exclude_chapters": {"type": "array", "items": {"type": "string"}},
+                            "limit": {"type": "integer", "default": 8}
+                        },
+                        "required": ["query"]
                     }
                 )
             ]

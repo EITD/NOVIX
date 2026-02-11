@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import useSWR from 'swr';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { volumesAPI } from '../../api';
+import { cn } from '../ui/core';
 
 /**
  * VolumeManager - 分卷管理组件
  *
  * 职责：
  * - 展示分卷列表
- * - 创建/编辑/删除分卷
+ * - 创建 / 编辑 / 删除分卷（V1 不可删除）
  */
 const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
   const [isCreating, setIsCreating] = useState(false);
@@ -40,7 +41,7 @@ const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
   };
 
   const handleUpdateVolume = async () => {
-    if (!editingVolume.title.trim()) {
+    if (!editingVolume?.title?.trim()) {
       alert('请输入分卷标题');
       return;
     }
@@ -65,7 +66,7 @@ const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
       alert('默认分卷 V1 不可删除');
       return;
     }
-    if (!window.confirm('确定要删除该分卷吗？')) {
+    if (!window.confirm('确定要删除该分卷吗？该操作不可撤销。')) {
       return;
     }
 
@@ -80,15 +81,15 @@ const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
   };
 
   if (isLoading) {
-    return <div className="text-xs text-ink-400 px-3 py-4">加载分卷中...</div>;
+    return <div className="text-xs text-[var(--vscode-fg-subtle)] px-3 py-4">加载分卷中...</div>;
   }
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-1">
-        <div className="text-xs font-bold text-ink-500 uppercase tracking-wider">分卷</div>
+        <div className="text-xs font-bold text-[var(--vscode-fg-subtle)] uppercase tracking-wider">分卷</div>
         <button
-          className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80"
+          className="inline-flex items-center gap-1 text-xs text-[var(--vscode-fg)] hover:text-[var(--vscode-fg)] transition-colors"
           onClick={() => setIsCreating(true)}
         >
           <Plus size={12} /> 新建
@@ -97,46 +98,45 @@ const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
 
       <div className="space-y-1.5">
         {volumes.length === 0 ? (
-          <div className="p-3 text-center text-xs text-ink-400 border border-dashed border-border rounded">
+          <div className="p-3 text-center text-xs text-[var(--vscode-fg-subtle)] border border-dashed border-[var(--vscode-sidebar-border)] rounded-[6px]">
             暂无分卷
           </div>
         ) : (
           volumes.map((volume) => (
             <div
               key={volume.id}
-              className="flex items-center justify-between gap-2 px-3 py-2 border border-border rounded bg-surface hover:border-primary/40 transition-colors"
+              className="flex items-center justify-between gap-2 px-3 py-2 border border-[var(--vscode-sidebar-border)] rounded-[6px] bg-[var(--vscode-bg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
             >
               <button
                 className="flex-1 min-w-0 text-left"
                 onClick={() => onVolumeSelect?.(volume.id)}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-primary">{volume.id}</span>
-                  <span className="text-xs font-medium text-ink-800 truncate">
-                    {volume.title}
-                  </span>
+                  <span className="text-[10px] font-mono text-[var(--vscode-fg-subtle)]">{volume.id}</span>
+                  <span className="text-xs font-semibold text-[var(--vscode-fg)] truncate">{volume.title}</span>
                 </div>
                 {volume.summary && (
-                  <div className="text-[11px] text-ink-400 mt-0.5 line-clamp-1">
-                    {volume.summary}
-                  </div>
+                  <div className="text-[11px] text-[var(--vscode-fg-subtle)] mt-0.5 line-clamp-1">{volume.summary}</div>
                 )}
               </button>
               <div className="flex items-center gap-1">
                 <button
-                  className="p-1 rounded hover:bg-ink-100 text-ink-500"
+                  className="p-2 rounded-[6px] hover:bg-[var(--vscode-list-hover)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] transition-colors"
                   onClick={() => setEditingVolume(volume)}
                   title="编辑分卷"
                 >
-                  <Pencil size={12} />
+                  <Pencil size={14} />
                 </button>
                 <button
-                  className="p-1 rounded hover:bg-red-50 text-red-500 disabled:opacity-40"
+                  className={cn(
+                    'p-2 rounded-[6px] transition-colors',
+                    volume.id === 'V1' ? 'text-[var(--vscode-fg-subtle)] cursor-not-allowed' : 'hover:bg-red-50 text-red-500'
+                  )}
                   onClick={() => handleDeleteVolume(volume.id)}
-                  title="删除分卷"
+                  title={volume.id === 'V1' ? '默认分卷不可删除' : '删除分卷'}
                   disabled={volume.id === 'V1'}
                 >
-                  <Trash2 size={12} />
+                  <Trash2 size={14} />
                 </button>
               </div>
             </div>
@@ -158,10 +158,10 @@ const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
             placeholder="例如：第一卷"
           />
           <TextAreaField
-            label="分卷摘要（可选）"
+            label="分卷简介（可选）"
             value={newVolume.summary}
             onChange={(value) => setNewVolume({ ...newVolume, summary: value })}
-            placeholder="一句话概述分卷内容"
+            placeholder="一句话描述分卷内容（可选）"
           />
         </Modal>
       )}
@@ -179,7 +179,7 @@ const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
             onChange={(value) => setEditingVolume({ ...editingVolume, title: value })}
           />
           <TextAreaField
-            label="分卷摘要（可选）"
+            label="分卷简介（可选）"
             value={editingVolume.summary || ''}
             onChange={(value) => setEditingVolume({ ...editingVolume, summary: value })}
           />
@@ -191,19 +191,28 @@ const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
 
 const Modal = ({ title, onClose, onConfirm, confirmText, children }) => {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="bg-surface border border-border rounded-lg shadow-2xl w-full max-w-md p-4 space-y-3">
-        <div className="text-sm font-bold text-ink-900">{title}</div>
-        <div className="space-y-3">{children}</div>
-        <div className="flex justify-end gap-2 pt-1">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 anti-theme">
+      <div className="w-full max-w-md glass-panel border border-[var(--vscode-sidebar-border)] rounded-[6px] overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--vscode-sidebar-border)] flex items-center justify-between bg-[var(--vscode-sidebar-bg)]">
+          <div className="text-sm font-bold text-[var(--vscode-fg)]">{title}</div>
           <button
-            className="px-3 py-1.5 text-xs rounded border border-border text-ink-600 hover:bg-ink-50"
+            className="p-2 rounded-[6px] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
+            onClick={onClose}
+            title="关闭"
+          >
+            X
+          </button>
+        </div>
+        <div className="p-4 space-y-3">{children}</div>
+        <div className="px-4 py-3 border-t border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)] flex justify-end gap-2">
+          <button
+            className="px-3 py-2 text-sm rounded-[6px] border border-[var(--vscode-input-border)] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
             onClick={onClose}
           >
             取消
           </button>
           <button
-            className="px-3 py-1.5 text-xs rounded bg-primary text-white hover:bg-primary/90"
+            className="px-3 py-2 text-sm rounded-[6px] bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 transition-colors"
             onClick={onConfirm}
           >
             {confirmText}
@@ -217,13 +226,13 @@ const Modal = ({ title, onClose, onConfirm, confirmText, children }) => {
 const InputField = ({ label, value, onChange, placeholder }) => {
   return (
     <label className="block space-y-1">
-      <span className="text-[11px] font-semibold text-ink-500 uppercase">{label}</span>
+      <span className="text-[11px] font-semibold text-[var(--vscode-fg-subtle)] uppercase">{label}</span>
       <input
         type="text"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="w-full px-3 py-2 text-xs rounded border border-border bg-white focus:outline-none focus:border-primary"
+        className="w-full px-3 py-2 text-sm rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)]"
       />
     </label>
   );
@@ -232,12 +241,12 @@ const InputField = ({ label, value, onChange, placeholder }) => {
 const TextAreaField = ({ label, value, onChange, placeholder }) => {
   return (
     <label className="block space-y-1">
-      <span className="text-[11px] font-semibold text-ink-500 uppercase">{label}</span>
+      <span className="text-[11px] font-semibold text-[var(--vscode-fg-subtle)] uppercase">{label}</span>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="w-full px-3 py-2 text-xs rounded border border-border bg-white focus:outline-none focus:border-primary"
+        className="w-full px-3 py-2 text-sm rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none"
         rows={4}
       />
     </label>

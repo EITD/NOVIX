@@ -1,9 +1,6 @@
 /**
- * InlineDiffEditor Component / 内联差异编辑器组件
- * 
- * Shows COMPLETE original content with diff changes embedded INLINE at exact positions
- * Like Cursor/Copilot: see full document with red/green at modified locations
- * 类似 Cursor/Copilot：完整正文中，在修改位置直接嵌入红绿显示
+ * InlineDiffEditor - 内联差异编辑器
+ * 在完整正文中嵌入修改位置的新增/删除提示。
  */
 
 import React, { useMemo } from 'react';
@@ -11,20 +8,20 @@ import { motion } from 'framer-motion';
 import { Check, X, Plus, Minus } from 'lucide-react';
 
 const InlineDiffEditor = ({
-    originalContent = "",    // Original text (FULL document)
-    revisedContent = "",     // Revised text (FULL document)
-    hunks = [],              // Diff hunks from backend
+    originalContent = "",    // 原始全文
+    revisedContent = "",     // 修订全文
+    hunks = [],              // 后端返回的 diff 块
     stats = {},              // { additions: N, deletions: N }
-    onAccept,                // Accept all changes
-    onReject,                // Reject all changes
+    onAccept,                // 接受修改
+    onReject,                // 拒绝修改
     className = ""
 }) => {
-    // Build merged view: original content with inline diffs
+    // 构建内联合并视图
     const mergedView = useMemo(() => {
         const originalLines = originalContent.split('\n');
         const hunksMap = new Map(); // lineIndex -> { deleted: string, added: string }
 
-        // If no hunks, just show original content
+        // 无差异时直接展示原文
         if (!hunks || hunks.length === 0) {
             return originalLines.map((line, i) => ({
                 type: 'unchanged',
@@ -33,17 +30,16 @@ const InlineDiffEditor = ({
             }));
         }
 
-        // Parse hunks to build a map of changes by line number
-        // Unified diff format: @@ -start,count +start,count @@
+        // 解析差异块（统一 diff 格式：@@ -start,count +start,count @@）
         let result = [];
         let originalLineNo = 0;
 
         hunks.forEach(hunk => {
-            // Parse header to get starting line
+            // 解析起始行
             const headerMatch = hunk.header?.match(/@@ -(\d+)/);
             let hunkStartLine = headerMatch ? parseInt(headerMatch[1]) - 1 : originalLineNo;
 
-            // Add unchanged lines before this hunk
+            // 追加变更前的未修改行
             while (originalLineNo < hunkStartLine && originalLineNo < originalLines.length) {
                 result.push({
                     type: 'unchanged',
@@ -53,7 +49,7 @@ const InlineDiffEditor = ({
                 originalLineNo++;
             }
 
-            // Process hunk changes
+            // 处理变更块
             if (hunk.changes) {
                 let pendingDeletes = [];
                 let pendingAdds = [];
@@ -92,7 +88,7 @@ const InlineDiffEditor = ({
             }
         });
 
-        // Add remaining unchanged lines after the last hunk
+        // 追加剩余未修改行
         while (originalLineNo < originalLines.length) {
             result.push({
                 type: 'unchanged',
@@ -106,15 +102,15 @@ const InlineDiffEditor = ({
     }, [originalContent, hunks]);
 
     return (
-        <div className={`flex flex-col h-full bg-white rounded-lg border border-border overflow-hidden ${className}`}>
-            {/* Floating Action Bar */}
+        <div className={`flex flex-col h-full bg-[var(--vscode-bg)] rounded-[6px] border border-[var(--vscode-sidebar-border)] overflow-hidden ${className}`}>
+            {/* 顶部操作栏 */}
             <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="sticky top-0 z-10 flex items-center justify-between px-4 py-2.5 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-200 shadow-sm"
+                className="sticky top-0 z-10 flex items-center justify-between px-4 py-2.5 bg-[var(--vscode-sidebar-bg)] border-b border-[var(--vscode-sidebar-border)]"
             >
                 <div className="flex items-center gap-4">
-                    <span className="text-sm font-bold text-amber-800">
+                    <span className="text-sm font-bold text-[var(--vscode-fg)]">
                         ✨ AI 修改建议
                     </span>
                     <div className="flex items-center gap-3 text-xs">
@@ -132,14 +128,14 @@ const InlineDiffEditor = ({
                 <div className="flex items-center gap-2">
                     <button
                         onClick={onReject}
-                        className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-md border border-red-200 transition-all hover:shadow-sm"
+                        className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-[6px] border border-red-200 transition-colors"
                     >
                         <X size={16} />
                         拒绝修改
                     </button>
                     <button
                         onClick={onAccept}
-                        className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md transition-all hover:shadow-sm"
+                        className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-[6px] transition-colors"
                     >
                         <Check size={16} />
                         接受修改
@@ -147,12 +143,11 @@ const InlineDiffEditor = ({
                 </div>
             </motion.div>
 
-            {/* Content Area - Full text with inline diffs */}
+            {/* 内容区 */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-                <div className="font-serif text-base leading-relaxed text-ink-900">
+                <div className="font-serif text-base leading-relaxed text-[var(--vscode-fg)]">
                     {mergedView.map((item, index) => {
                         if (item.type === 'unchanged') {
-                            // Normal unchanged line
                             return (
                                 <div key={index} className="leading-loose">
                                     {item.content}
@@ -161,7 +156,6 @@ const InlineDiffEditor = ({
                         }
 
                         if (item.type === 'diff') {
-                            // Inline diff: deleted (red) + added (green)
                             return (
                                 <div key={index} className="my-2">
                                     {item.deleted && (
@@ -188,8 +182,8 @@ const InlineDiffEditor = ({
                 </div>
             </div>
 
-            {/* Bottom hint */}
-            <div className="px-4 py-2 border-t border-border bg-ink-50/50 text-xs text-ink-500 text-center">
+            {/* 底部提示 */}
+            <div className="px-4 py-2 border-t border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)] text-xs text-[var(--vscode-fg-subtle)] text-center">
                 💡 <span className="text-red-600 bg-red-50 px-1 rounded line-through">红色</span> 为删除内容，
                 <span className="text-green-700 bg-green-50 px-1 rounded">绿色</span> 为新增内容
             </div>

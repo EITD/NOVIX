@@ -1,26 +1,30 @@
 import { cn } from "../../lib/utils";
 import { Loader2 } from "lucide-react";
 
+/**
+ * Button - 轻量按钮组件
+ * 仅处理样式与加载态，不改变业务语义。
+ */
 export function Button({ className, variant = "primary", size = "default", isLoading, children, ...props }) {
   const variants = {
-    primary: "bg-primary text-black hover:bg-primary-hover border border-primary",
-    secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border",
-    outline: "bg-transparent border border-primary/20 text-primary hover:bg-primary/10",
-    ghost: "bg-transparent hover:bg-white/5 text-muted-foreground hover:text-white",
-    destructive: "bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20"
+    primary: "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border border-[var(--vscode-input-border)] hover:opacity-90",
+    secondary: "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] border border-[var(--vscode-input-border)]",
+    outline: "bg-transparent border border-[var(--vscode-input-border)] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)]",
+    ghost: "bg-transparent hover:bg-[var(--vscode-list-hover)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]",
+    destructive: "bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
   };
 
   const sizes = {
     sm: "h-8 px-3 text-xs",
     default: "h-10 px-4 py-2",
-    lg: "h-12 px-8 text-lg",
+    lg: "h-12 px-8 text-base",
     icon: "h-10 w-10 p-0 flex items-center justify-center"
   };
 
   return (
     <button 
       className={cn(
-        "inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:pointer-events-none disabled:opacity-50",
+        "inline-flex items-center justify-center rounded-[6px] text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--vscode-focus-border)] disabled:pointer-events-none disabled:opacity-50",
         variants[variant],
         sizes[size],
         className

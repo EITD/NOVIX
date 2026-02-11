@@ -59,6 +59,10 @@ class ContextSelectEngine:
     ) -> List[ContextItem]:
         all_candidates: List[ContextItem] = []
         for item_type in item_types:
+            if item_type == "text_chunk":
+                chunks = await self._search_text_chunks(project_id, query, storage, top_k)
+                all_candidates.extend(chunks)
+                continue
             candidates = await self._get_candidates(project_id, item_type, storage)
             all_candidates.extend(candidates)
 
@@ -66,7 +70,9 @@ class ContextSelectEngine:
             return []
 
         if not self.embeddings:
-            return self._simple_text_match(query, all_candidates, top_k)
+            self._assign_simple_scores(query, all_candidates)
+            all_candidates.sort(key=lambda x: x.relevance_score, reverse=True)
+            return all_candidates[:top_k]
 
         query_embedding = await self.embeddings.encode(query)
         for item in all_candidates:
@@ -121,15 +127,41 @@ class ContextSelectEngine:
 
         return candidates
 
-    def _simple_text_match(self, query: str, candidates: List[ContextItem], top_k: int) -> List[ContextItem]:
+    def _assign_simple_scores(self, query: str, candidates: List[ContextItem]) -> None:
         query_lower = query.lower()
+        query_words = query_lower.split()
         for item in candidates:
+            if item.relevance_score and item.relevance_score > 0:
+                continue
             content_lower = item.content.lower()
-            overlap = sum(1 for word in query_lower.split() if word in content_lower)
-            item.relevance_score = overlap / max(len(query_lower.split()), 1)
+            overlap = sum(1 for word in query_words if word and word in content_lower)
+            item.relevance_score = overlap / max(len(query_words), 1)
 
-        candidates.sort(key=lambda x: x.relevance_score, reverse=True)
-        return candidates[:top_k]
+    async def _search_text_chunks(
+        self,
+        project_id: str,
+        query: str,
+        storage: Any,
+        top_k: int,
+    ) -> List[ContextItem]:
+        if not hasattr(storage, "search_text_chunks"):
+            return []
+        results = await storage.search_text_chunks(project_id, query, limit=top_k)
+        items: List[ContextItem] = []
+        for result in results:
+            content = result.get("text") or ""
+            source = result.get("source") or {}
+            items.append(
+                ContextItem(
+                    id=result.get("id") or "text_chunk",
+                    type=ContextType.TEXT_CHUNK,
+                    content=content,
+                    priority=ContextPriority.LOW,
+                    relevance_score=float(result.get("score") or 0),
+                    metadata={"source": source, "chapter": source.get("chapter")},
+                )
+            )
+        return items
 
     def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         dot_product = np.dot(vec1, vec2)

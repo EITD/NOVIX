@@ -3,6 +3,10 @@ import { draftsAPI } from '../../api';
 import { Button, Card } from '../ui/core';
 import { FileText, Trash2, Eye, EyeOff, BookOpen, Clock, ChevronRight, Sparkles, Drama } from 'lucide-react';
 
+/**
+ * DraftsView - 章节草稿与版本视图
+ * 展示章节列表、版本与内容预览。
+ */
 export function DraftsView({ projectId }) {
   const [chapters, setChapters] = useState([]);
   const [selectedChapter, setSelectedChapter] = useState('');
@@ -60,7 +64,7 @@ export function DraftsView({ projectId }) {
   const getChapterIcon = (chapterId) => {
     if (chapterId.includes('E')) return <Sparkles size={14} className="text-amber-500" />;
     if (chapterId.includes('I')) return <Drama size={14} className="text-blue-500" />;
-    return <BookOpen size={14} className="text-ink-600" />;
+    return <BookOpen size={14} className="text-[var(--vscode-fg-subtle)]" />;
   };
 
   const loadChapterData = async () => {
@@ -87,7 +91,7 @@ export function DraftsView({ projectId }) {
       const dResp = await draftsAPI.getDraft(projectId, selectedChapter, selectedVersion);
       setDraftContent(dResp?.data?.content || '');
     } catch (e) {
-      setDraftContent('Error loading content');
+      setDraftContent('加载内容失败');
     } finally {
       setLoading(false);
     }
@@ -98,17 +102,17 @@ export function DraftsView({ projectId }) {
       {/* Sidebar List */}
       <div className="lg:col-span-3 flex flex-col gap-4 overflow-hidden">
         <div className="flex items-center justify-between px-1">
-          <h3 className="text-lg font-bold text-ink-900">内容管理</h3>
+          <h3 className="text-lg font-bold text-[var(--vscode-fg)]">内容管理</h3>
         </div>
         <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-          {chapters.length === 0 && <div className="text-sm text-ink-400 p-2 italic">暂无章节</div>}
+          {chapters.length === 0 && <div className="text-sm text-[var(--vscode-fg-subtle)] p-2 italic">暂无章节</div>}
           {chapters.map((ch) => (
             <div
               key={ch}
               onClick={() => setSelectedChapter(ch)}
-              className={`p-3 rounded-md border cursor-pointer transition-all text-sm flex items-center gap-2 ${selectedChapter === ch
-                ? 'bg-primary text-white border-primary shadow-sm'
-                : 'bg-surface border-border text-ink-600 hover:text-ink-900 hover:border-primary/30'
+              className={`p-3 rounded-[6px] border cursor-pointer transition-colors text-sm flex items-center gap-2 ${selectedChapter === ch
+                ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]'
+                : 'bg-[var(--vscode-bg)] border-[var(--vscode-sidebar-border)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)]'
                 }`}
             >
               {getChapterIcon(ch)}
@@ -122,7 +126,7 @@ export function DraftsView({ projectId }) {
       {/* Main Content */}
       <div className="lg:col-span-9 flex flex-col gap-6 overflow-hidden">
         {!selectedChapter ? (
-          <div className="flex-1 flex items-center justify-center text-ink-400 border border-dashed border-border rounded-lg bg-surface/50">
+          <div className="flex-1 flex items-center justify-center text-[var(--vscode-fg-subtle)] border border-dashed border-[var(--vscode-sidebar-border)] rounded-[6px] bg-[var(--vscode-bg)]">
             <div className="flex flex-col items-center">
               <FileText size={48} className="mb-4 opacity-20" />
               <span className="font-serif">选择章节查看详情</span>
@@ -132,33 +136,33 @@ export function DraftsView({ projectId }) {
           <>
             {/* Top Meta */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Card className="md:col-span-2 bg-surface">
-                <div className="p-4 border-b border-border bg-gray-50/50">
-                  <h4 className="text-sm font-bold text-ink-900 flex items-center gap-2">
-                    <BookOpen size={14} className="text-primary" /> 章节摘要
+              <Card className="md:col-span-2 bg-[var(--vscode-bg)]">
+                <div className="p-4 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
+                  <h4 className="text-sm font-bold text-[var(--vscode-fg)] flex items-center gap-2">
+                    <BookOpen size={14} className="text-[var(--vscode-fg-subtle)]" /> 章节摘要
                   </h4>
                 </div>
                 <div className="p-4">
                   {summary ? (
                     <div className="space-y-2">
-                      <div className="font-bold text-ink-900">{summary.title}</div>
-                      <div className="text-sm text-ink-600 line-clamp-2 leading-relaxed">{summary.brief_summary}</div>
+                      <div className="font-bold text-[var(--vscode-fg)]">{summary.title}</div>
+                      <div className="text-sm text-[var(--vscode-fg-subtle)] line-clamp-2 leading-relaxed">{summary.brief_summary}</div>
                     </div>
                   ) : (
-                    <span className="text-xs text-ink-400 italic">暂无摘要信息</span>
+                    <span className="text-xs text-[var(--vscode-fg-subtle)] italic">暂无摘要信息</span>
                   )}
                 </div>
               </Card>
 
-              <Card className="bg-surface">
-                <div className="p-4 border-b border-border bg-gray-50/50">
-                  <h4 className="text-sm font-bold text-ink-900 flex items-center gap-2">
-                    <Clock size={14} className="text-primary" /> 版本历史
+              <Card className="bg-[var(--vscode-bg)]">
+                <div className="p-4 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
+                  <h4 className="text-sm font-bold text-[var(--vscode-fg)] flex items-center gap-2">
+                    <Clock size={14} className="text-[var(--vscode-fg-subtle)]" /> 版本历史
                   </h4>
                 </div>
                 <div className="p-4 space-y-3">
                   <select
-                    className="w-full bg-background border border-border rounded p-2 text-sm text-ink-900 focus:outline-none focus:border-primary transition-colors cursor-pointer"
+                    className="w-full bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] rounded-[6px] p-2 text-sm text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-colors cursor-pointer"
                     value={selectedVersion}
                     onChange={(e) => setSelectedVersion(e.target.value)}
                   >
@@ -191,16 +195,16 @@ export function DraftsView({ projectId }) {
             </div>
 
             {/* Content Viewer */}
-            <Card className="flex-1 overflow-hidden flex flex-col bg-surface shadow-paper">
-              <div className="p-4 border-b border-border flex flex-row justify-between items-center bg-gray-50/30">
-                <h4 className="text-sm font-bold text-ink-900">内容预览: <span className="font-mono font-normal ml-2 text-ink-500">{selectedVersion}</span></h4>
-                <div className="text-xs font-mono text-ink-400">
+            <Card className="flex-1 overflow-hidden flex flex-col bg-[var(--vscode-bg)] shadow-none">
+              <div className="p-4 border-b border-[var(--vscode-sidebar-border)] flex flex-row justify-between items-center bg-[var(--vscode-sidebar-bg)]">
+                <h4 className="text-sm font-bold text-[var(--vscode-fg)]">内容预览: <span className="font-mono font-normal ml-2 text-[var(--vscode-fg-subtle)]">{selectedVersion}</span></h4>
+                <div className="text-xs font-mono text-[var(--vscode-fg-subtle)]">
                   {loading ? '加载中...' : `${draftContent.length} 字符`}
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-white">
-                <div className="prose prose-slate max-w-none font-serif text-ink-900 leading-loose">
-                  <pre className="whitespace-pre-wrap font-serif text-ink-900 bg-transparent p-0 border-0">
+              <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-[var(--vscode-input-bg)]">
+                <div className="prose prose-slate max-w-none font-serif text-[var(--vscode-fg)] leading-loose">
+                  <pre className="whitespace-pre-wrap font-serif text-[var(--vscode-fg)] bg-transparent p-0 border-0">
                     {draftContent}
                   </pre>
                 </div>

@@ -41,3 +41,13 @@ class UnifiedStorageAdapter:
         
     async def get_review(self, project_id: str, chapter: str) -> Optional[Dict]:
         return await self.draft.get_review(project_id, chapter)
+
+    async def search_text_chunks(
+        self,
+        project_id: str,
+        query: str,
+        limit: int = 5
+    ) -> List[Dict]:
+        if hasattr(self.draft, "search_text_chunks"):
+            return await self.draft.search_text_chunks(project_id, query, limit=limit)
+        return []

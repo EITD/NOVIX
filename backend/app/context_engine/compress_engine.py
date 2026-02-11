@@ -6,6 +6,7 @@ Implements the Compress practice of context engineering
 
 from typing import List, Dict, Any
 from .models import ContextItem, ContextPriority, estimate_tokens
+from app.prompts import context_compress_prompt
 
 
 class ContextCompressEngine:
@@ -86,32 +87,11 @@ class ContextCompressEngine:
             ratio = target_tokens / max(current_tokens, 1)
             return self.rule_based_compress(text, min(ratio, 1.0))
         
-        prompts = {
-            "facts": """请将以下内容压缩为关键事实列表，保留所有重要信息，目标长度约 {target_tokens} 字：
-
-{text}
-
-只输出压缩后的内容：""",
-            
-            "narrative": """请将以下叙述内容精简，保留核心情节和关键细节，目标长度约 {target_tokens} 字：
-
-{text}
-
-只输出精简后的内容：""",
-            
-            "mixed": """请压缩以下内容，保留最重要的信息点，目标长度约 {target_tokens} 字：
-
-{text}
-
-只输出压缩后的内容："""
-        }
-        
-        prompt_template = prompts.get(preserve_type, prompts["mixed"])
-        prompt = prompt_template.format(text=text, target_tokens=target_tokens)
-        
         try:
+            prompt = context_compress_prompt(text=text, target_tokens=target_tokens, preserve_type=preserve_type)
             response = await self.llm.chat([
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": prompt.system},
+                {"role": "user", "content": prompt.user},
             ], temperature=0.3)
             
             return response["content"]

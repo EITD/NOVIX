@@ -22,7 +22,14 @@ class BaseStorage:
             data_dir: Root data directory / 数据根目录
         """
         from app.config import settings
-        self.data_dir = Path(data_dir or settings.data_dir)
+        raw_data_dir = str(data_dir or settings.data_dir)
+        resolved = Path(raw_data_dir)
+        if not resolved.is_absolute():
+            # Resolve relative paths against the backend root instead of the current working directory
+            # so scripts/tests behave consistently regardless of where they are launched from.
+            backend_root = Path(__file__).resolve().parents[2]
+            resolved = (backend_root / resolved).resolve()
+        self.data_dir = resolved
         self.encoding = "utf-8"
     
     def get_project_path(self, project_id: str) -> Path:

@@ -7,102 +7,16 @@
  * - 底部输入框用于用户交互
  */
 
-import React, { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Book, PenTool, Edit3, User, Bot, AlertCircle, Send, Sparkles } from 'lucide-react';
-
-// 状态灯组件
-const StatusLight = ({ status }) => {
-    const colors = {
-        idle: 'bg-gray-300',
-        working: 'bg-green-500 animate-pulse',
-        done: 'bg-green-500',
-        error: 'bg-red-500'
-    };
-
-    return (
-        <span className={`w-2 h-2 rounded-full ${colors[status] || colors.idle}`} />
-    );
-};
-
-// Agent 状态卡片（嵌入消息流中）
-const AgentCard = ({
-    icon: Icon,
-    name,
-    status,
-    description,
-    expandable = false,
-    expandedContent = null,
-}) => {
-    const [isExpanded, setIsExpanded] = useState(false);
-
-    return (
-        <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-100 rounded-xl overflow-hidden my-2"
-        >
-            <div
-                className={`flex items-center justify-between p-3 ${expandable ? 'cursor-pointer hover:bg-amber-50/50' : ''}`}
-                onClick={expandable ? () => setIsExpanded(!isExpanded) : undefined}
-            >
-                <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
-                        <Icon size={16} className="text-amber-700" />
-                    </div>
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-ink-800">{name}</span>
-                            <StatusLight status={status} />
-                        </div>
-                        {description && (
-                            <p className="text-xs text-ink-500">{description}</p>
-                        )}
-                    </div>
-                </div>
-
-                {expandable && status === 'done' && (
-                    <motion.div
-                        animate={{ rotate: isExpanded ? 180 : 0 }}
-                        transition={{ duration: 0.2 }}
-                    >
-                        <ChevronDown size={16} className="text-ink-400" />
-                    </motion.div>
-                )}
-            </div>
-
-            {/* 展开内容 - 原始 JSON */}
-            <AnimatePresence>
-                {expandable && isExpanded && expandedContent && (
-                    <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.2 }}
-                        className="overflow-hidden"
-                    >
-                        <div className="px-3 pb-3">
-                            <div className="bg-white/80 border border-amber-100 rounded-lg p-2 max-h-48 overflow-y-auto custom-scrollbar">
-                                <pre className="text-[10px] text-ink-600 font-mono whitespace-pre-wrap break-words">
-                                    {typeof expandedContent === 'string'
-                                        ? expandedContent
-                                        : JSON.stringify(expandedContent, null, 2)}
-                                </pre>
-                            </div>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-        </motion.div>
-    );
-};
+import React, { useMemo, useState, useRef, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { ChevronDown, Send, Sparkles, Copy } from 'lucide-react';
 
 // 消息项组件
 const MessageItem = ({ type, content, time }) => {
     const styles = {
-        user: 'bg-primary text-white ml-8',
-        assistant: 'bg-ink-100 text-ink-700 mr-8',
-        system: 'bg-amber-50 text-amber-700 border border-amber-100 mr-8',
+        user: 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] ml-8 border border-[var(--vscode-input-border)]',
+        assistant: 'bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-sidebar-border)] mr-8',
+        system: 'bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-sidebar-border)] mr-8 font-mono',
         error: 'bg-red-50 text-red-700 border border-red-200 mr-8',
     };
 
@@ -110,7 +24,7 @@ const MessageItem = ({ type, content, time }) => {
         <motion.div
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`px-3 py-2 rounded-lg text-xs my-1.5 ${styles[type] || styles.system}`}
+            className={`px-3 py-2 rounded-[6px] text-xs my-1.5 ${styles[type] || styles.system}`}
         >
             {content}
             {time && (
@@ -122,37 +36,262 @@ const MessageItem = ({ type, content, time }) => {
     );
 };
 
+const RunCard = ({
+    run,
+    expandedTrace,
+    onToggleTrace,
+    formatStageLabel,
+    formatTime,
+    formatSource,
+}) => {
+    const headerTime = run.startedAt ? formatTime(run.startedAt) : '';
+    return (
+        <div className="border border-[var(--vscode-sidebar-border)] rounded-[6px] bg-[var(--vscode-input-bg)] my-2 overflow-hidden">
+            <div className="px-3 py-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
+                <div className="flex items-start justify-between gap-2">
+                    <div className="flex flex-col gap-1 min-w-0">
+                        <div className="text-[10px] text-[var(--vscode-fg-subtle)]">指令</div>
+                        <div className="text-xs text-[var(--vscode-fg)] whitespace-pre-wrap break-words">
+                            {run.userContent || '（系统）'}
+                        </div>
+                    </div>
+                    {headerTime ? (
+                        <div className="text-[10px] text-[var(--vscode-fg-subtle)] whitespace-nowrap">{headerTime}</div>
+                    ) : null}
+                </div>
+            </div>
+
+            {run.messages.length > 0 ? (
+                <div className="px-3 py-2">
+                    {run.messages.map((msg) => (
+                        <MessageItem key={msg.id} type={msg.type} content={msg.content} time={msg.time} />
+                    ))}
+                </div>
+            ) : null}
+
+            {run.progressEvents.length > 0 ? (
+                <div className="px-3 pb-3">
+                    <div className="text-[10px] text-[var(--vscode-fg-subtle)] mb-1">行动轨迹</div>
+                    <div className="space-y-1">
+                        {run.progressEvents.map((event) => {
+                            const hasDetails =
+                                Boolean(event.note) ||
+                                (Array.isArray(event.queries) && event.queries.length > 0) ||
+                                typeof event.hits === 'number' ||
+                                Boolean(event.stop_reason) ||
+                                (Array.isArray(event.top_sources) && event.top_sources.length > 0) ||
+                                event.payload !== undefined;
+                            const expanded = Boolean(expandedTrace[event.id]);
+                            const lineTime = event.timestamp ? formatTime(event.timestamp) : '';
+
+                            return (
+                                <div key={event.id} className="text-[10px] text-[var(--vscode-fg-subtle)]">
+                                    <button
+                                        type="button"
+                                        onClick={hasDetails ? () => onToggleTrace(event.id) : undefined}
+                                        className={[
+                                            "w-full text-left leading-snug",
+                                            hasDetails ? "hover:text-[var(--vscode-fg)] cursor-pointer" : "cursor-default"
+                                        ].join(' ')}
+                                    >
+                                        <span className="font-mono opacity-70 mr-2">{lineTime}</span>
+                                        <span className="text-[var(--vscode-fg)] font-semibold mr-2">{formatStageLabel(event.stage)}</span>
+                                        <span>{event.message || ''}</span>
+                                    </button>
+
+                                    {hasDetails && expanded ? (
+                                        <div className="mt-1 ml-4 border-l border-[var(--vscode-sidebar-border)] pl-3 space-y-2">
+                                            {event.note ? (
+                                                <div className="text-[10px] text-[var(--vscode-fg-subtle)] whitespace-pre-wrap break-words">
+                                                    {event.note}
+                                                </div>
+                                            ) : null}
+
+                                            {(Array.isArray(event.queries) && event.queries.length > 0) ? (
+                                                <div>
+                                                    <div className="text-[10px] text-[var(--vscode-fg-subtle)] mb-1">查询</div>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {event.queries.map((q, idx) => (
+                                                            <span
+                                                                key={`${event.id}-q-${idx}`}
+                                                                className="px-2 py-0.5 rounded-[6px] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-bg)] text-[10px] text-[var(--vscode-fg-subtle)]"
+                                                            >
+                                                                {q}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ) : null}
+
+                                            {typeof event.hits === 'number' ? (
+                                                <div className="text-[10px] text-[var(--vscode-fg-subtle)]">命中：{event.hits}</div>
+                                            ) : null}
+
+                                            {(Array.isArray(event.top_sources) && event.top_sources.length > 0) ? (
+                                                <div>
+                                                    <div className="text-[10px] text-[var(--vscode-fg-subtle)] mb-1">命中摘要</div>
+                                                    <div className="pt-1 space-y-1">
+                                                        {event.top_sources.slice(0, 8).map((source, index) => (
+                                                            <div key={`${event.id}-src-${index}`} className="text-[10px]">
+                                                                <span className="font-mono">#{index + 1}</span>
+                                                                <span className="ml-2">{source.type || 'evidence'}</span>
+                                                                <span className="ml-2">{source.snippet}</span>
+                                                                {formatSource(source.source) ? (
+                                                                    <span className="ml-2 text-[var(--vscode-fg-subtle)]">
+                                                                        ({formatSource(source.source)})
+                                                                    </span>
+                                                                ) : null}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ) : null}
+
+                                            {event.stop_reason ? (
+                                                <div className="text-[10px] text-[var(--vscode-fg-subtle)]">停止原因：{event.stop_reason}</div>
+                                            ) : null}
+
+                                            {event.payload !== undefined ? (
+                                                <div>
+                                                    <div className="text-[10px] text-[var(--vscode-fg-subtle)] mb-1">详情</div>
+                                                    <div className="bg-[var(--vscode-input-bg)] border border-[var(--vscode-sidebar-border)] rounded-[6px] p-3 max-h-64 overflow-y-auto custom-scrollbar">
+                                                        <pre className="text-[10px] text-[var(--vscode-fg-subtle)] font-mono whitespace-pre-wrap break-words">
+                                                            {typeof event.payload === 'string' ? event.payload : JSON.stringify(event.payload, null, 2)}
+                                                        </pre>
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            ) : null}
+        </div>
+    );
+};
+
 // 主面板组件
 const AgentStatusPanel = ({
     mode = 'create',
-    archivistStatus = 'idle',
-    writerStatus = 'idle',
-    editorStatus = 'idle',
-    archivistOutput = null,
+    onModeChange = () => { },
+    createDisabled = false,
+    contextDebug = null,
+    progressEvents = [],
     messages = [],
+    memoryPackStatus = null,
+    activeChapter = null,
+    editContextMode = 'quick',
+    onEditContextModeChange = () => { },
     onSubmit = () => { },
     className = ''
 }) => {
     const [inputValue, setInputValue] = useState('');
+    const [copyStatus, setCopyStatus] = useState('');
+    const [expandedTrace, setExpandedTrace] = useState({});
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
+
+    const runs = useMemo(() => {
+        const combined = [];
+        messages.forEach((msg, index) => {
+            combined.push({
+                kind: 'message',
+                id: `msg-${index}`,
+                ts: msg.time?.getTime?.() || 0,
+                msg,
+            });
+        });
+        progressEvents.forEach((event) => {
+            combined.push({
+                kind: 'progress',
+                id: event.id,
+                ts: event.timestamp || 0,
+                event,
+            });
+        });
+        combined.sort((a, b) => a.ts - b.ts);
+
+        const result = [];
+        let current = null;
+        let runSeq = 0;
+
+        const ensureRun = (startedAt = 0, userContent = '') => {
+            if (current) return current;
+            current = {
+                id: `run-${runSeq++}`,
+                startedAt,
+                userContent,
+                messages: [],
+                progressEvents: [],
+            };
+            return current;
+        };
+
+        combined.forEach((item) => {
+            if (item.kind === 'message' && item.msg?.type === 'user') {
+                if (current) result.push(current);
+                current = {
+                    id: `run-${runSeq++}`,
+                    startedAt: item.ts,
+                    userContent: String(item.msg.content || '').trim(),
+                    messages: [],
+                    progressEvents: [],
+                };
+                return;
+            }
+
+            const run = ensureRun(item.ts, '');
+            if (item.kind === 'message') {
+                run.messages.push({
+                    id: item.id,
+                    type: item.msg.type,
+                    content: item.msg.content,
+                    time: item.msg.time,
+                });
+            } else if (item.kind === 'progress') {
+                run.progressEvents.push(item.event);
+            }
+        });
+
+        if (current) result.push(current);
+        return result;
+    }, [messages, progressEvents]);
+
+    const feedItems = useMemo(() => {
+        const runItems = runs.map((run) => ({
+            kind: 'run',
+            id: run.id,
+            ts: run.startedAt || 0,
+            run,
+        }));
+        const contextItems = contextDebug
+            ? [{
+                kind: 'context',
+                id: 'context-debug',
+                ts: Number.MAX_SAFE_INTEGER,
+                debug: contextDebug,
+            }]
+            : [];
+        return [...runItems, ...contextItems].sort((a, b) => a.ts - b.ts);
+    }, [runs, contextDebug]);
 
     // 自动滚动到底部
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages, archivistStatus, writerStatus, editorStatus]);
+    }, [messages.length, progressEvents.length, contextDebug]);
 
-    // 判断是否显示 Agent 卡片
-    const showArchivistCard = archivistStatus !== 'idle';
-    const showWriterCard = mode === 'create' && writerStatus !== 'idle';
-    const showEditorCard = mode === 'edit' && editorStatus !== 'idle';
-
-    const hasAnyContent = messages.length > 0 || showArchivistCard || showWriterCard || showEditorCard;
+    const hasAnyContent = runs.length > 0 || Boolean(contextDebug);
 
     const handleSubmit = () => {
         if (!inputValue.trim()) return;
         onSubmit(inputValue);
         setInputValue('');
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+        }
     };
 
     const handleKeyDown = (e) => {
@@ -162,86 +301,198 @@ const AgentStatusPanel = ({
         }
     };
 
+    const updateInputHeight = (el) => {
+        if (!el) return;
+        el.style.height = 'auto';
+        const maxHeight = 160;
+        const nextHeight = Math.min(el.scrollHeight, maxHeight);
+        el.style.height = `${Math.max(nextHeight, 40)}px`;
+    };
+
+    const handleCopyContextDebug = async () => {
+        if (!contextDebug) return;
+        const text = typeof contextDebug === 'string' ? contextDebug : JSON.stringify(contextDebug, null, 2);
+        if (!navigator?.clipboard?.writeText) {
+            window.alert('当前环境不支持剪贴板复制');
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopyStatus('已复制');
+            setTimeout(() => setCopyStatus(''), 1500);
+        } catch (error) {
+            setCopyStatus('复制失败');
+            setTimeout(() => setCopyStatus(''), 2000);
+        }
+    };
+
+    const toggleTrace = (id) => {
+        setExpandedTrace((prev) => ({ ...prev, [id]: !prev[id] }));
+    };
+
+    const formatStageLabel = (stage) => {
+        const mapping = {
+            read_previous: '阅读前文',
+            read_facts: '检索事实摘要',
+            lookup_cards: '查询设定',
+            prepare_retrieval: '准备检索',
+            generate_plan: '生成研究计划',
+            execute_retrieval: '执行检索',
+            self_check: '证据自检',
+            memory_pack: '记忆包',
+            writing: '撰写',
+            persist: '保存',
+            session_start: '启动会话',
+            scene_brief: '场景简报',
+            edit_suggest: '生成修改建议',
+            edit_suggest_done: '修改建议完成',
+            system: '系统',
+            connection: '连接',
+        };
+        return mapping[stage] || stage || '进度';
+    };
+
+    const formatSource = (source) => {
+        if (!source) return '';
+        const parts = [
+            source.chapter,
+            source.path,
+            source.field,
+            source.fact_id,
+            source.card,
+            source.introduced_in,
+        ].filter(Boolean);
+        return parts.join(' / ');
+    };
+
+    const formatTime = (timestamp) => {
+        if (!timestamp) return '';
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    };
+
+    const formatBuiltAt = (value) => {
+        if (!value) return '';
+        const date = new Date(value);
+        return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    };
+
+    const memoryPackSummary = useMemo(() => {
+        if (!activeChapter) {
+            return { label: '记忆包：未选择章节', detail: '' };
+        }
+        if (!memoryPackStatus) {
+            return { label: '记忆包：加载中...', detail: '' };
+        }
+        if (!memoryPackStatus.exists) {
+            return { label: '记忆包：未生成', detail: '' };
+        }
+        const detailParts = [];
+        const builtAt = formatBuiltAt(memoryPackStatus.built_at);
+        if (builtAt) detailParts.push(`生成时间 ${builtAt}`);
+        const total = memoryPackStatus?.evidence_stats?.total;
+        if (typeof total === 'number') detailParts.push(`证据 ${total}`);
+        const source = memoryPackStatus?.source;
+        if (source) detailParts.push(`来源 ${source}`);
+        return {
+            label: '记忆包：已生成',
+            detail: detailParts.join(' / ')
+        };
+    }, [activeChapter, memoryPackStatus]);
+
     return (
         <div className={`flex flex-col h-full ${className}`}>
-            {/* 面板标题 */}
-            <div className="px-4 py-3 border-b border-border flex-shrink-0">
-                <h2 className="text-sm font-bold text-ink-700">💬 对话与进度</h2>
+            <div className="px-3 py-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
+                <div className="text-[11px] text-[var(--vscode-fg)]">{memoryPackSummary.label}</div>
+                {memoryPackSummary.detail ? (
+                    <div className="text-[10px] text-[var(--vscode-fg-subtle)]">{memoryPackSummary.detail}</div>
+                ) : null}
             </div>
-
-            {/* 消息列表（含 Agent 卡片） */}
+            {/* 消息列表（对话 + 行动轨迹） */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
                 {!hasAnyContent ? (
                     /* 欢迎提示 */
-                    <div className="h-full flex flex-col items-center justify-center text-center p-6">
-                        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center mb-4">
-                            <Sparkles size={28} className="text-amber-600" />
+                        <div className="h-full flex flex-col items-center justify-center text-center p-6">
+                        <div className="w-16 h-16 rounded-[6px] bg-[var(--vscode-list-hover)] border border-[var(--vscode-sidebar-border)] flex items-center justify-center mb-4">
+                            <Sparkles size={28} className="text-[var(--vscode-focus-border)]" />
                         </div>
-                        <h3 className="text-sm font-bold text-ink-700 mb-2">开始创作</h3>
-                        <p className="text-xs text-ink-500 max-w-[200px]">
+                        <h3 className="text-sm font-bold text-[var(--vscode-fg)] mb-2">开始创作</h3>
+                        <p className="text-xs text-[var(--vscode-fg-subtle)] max-w-[200px]">
                             选择章节后，在下方输入创作指令开始生成，或直接输入修改意见
                         </p>
                     </div>
                 ) : (
                     <>
-                        {/* 现有消息 */}
-                        {messages.map((msg, idx) => (
-                            <MessageItem
-                                key={idx}
-                                type={msg.type}
-                                content={msg.content}
-                                time={msg.time}
-                            />
-                        ))}
+                        {feedItems.map((item) => {
+                            if (item.kind === 'run') {
+                                return (
+                                    <RunCard
+                                        key={item.id}
+                                        run={item.run}
+                                        expandedTrace={expandedTrace}
+                                        onToggleTrace={toggleTrace}
+                                        formatStageLabel={formatStageLabel}
+                                        formatTime={formatTime}
+                                        formatSource={formatSource}
+                                    />
+                                );
+                            }
+                            if (item.kind === 'context') {
+                                const expanded = Boolean(expandedTrace[item.id]);
+                                return (
+                                    <div
+                                        key={item.id}
+                                        className="border border-[var(--vscode-sidebar-border)] rounded-[6px] bg-[var(--vscode-input-bg)] my-2 overflow-hidden"
+                                    >
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleTrace(item.id)}
+                                            className="w-full text-left px-3 py-2 flex items-start justify-between gap-2 hover:bg-[var(--vscode-list-hover)]"
+                                        >
+                                            <div className="flex flex-col gap-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-bold text-[var(--vscode-fg)]">工作记忆</span>
+                                                    <span className="text-[10px] text-[var(--vscode-fg-subtle)]">可展开查看</span>
+                                                </div>
+                                                <div className="text-xs text-[var(--vscode-fg-subtle)]">证据与缺口摘要（用于对齐与调试）</div>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-[10px] text-[var(--vscode-fg-subtle)]">
+                                                <button
+                                                    type="button"
+                                                    onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        handleCopyContextDebug();
+                                                    }}
+                                                    title="复制(JSON)"
+                                                    className="flex items-center gap-1 px-2 py-1 rounded-[6px] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-input-bg)] hover:border-[var(--vscode-focus-border)]"
+                                                >
+                                                    <Copy size={12} />
+                                                    <span>{copyStatus || '复制'}</span>
+                                                </button>
+                                                <motion.div
+                                                    animate={{ rotate: expanded ? 180 : 0 }}
+                                                    transition={{ duration: 0.15 }}
+                                                >
+                                                    <ChevronDown size={14} />
+                                                </motion.div>
+                                            </div>
+                                        </button>
+                                        {expanded && (
+                                            <div className="px-3 pb-3">
+                                                <div className="bg-[var(--vscode-input-bg)] border border-[var(--vscode-sidebar-border)] rounded-[6px] p-3 max-h-64 overflow-y-auto custom-scrollbar">
+                                                    <pre className="text-[10px] text-[var(--vscode-fg-subtle)] font-mono whitespace-pre-wrap break-words">
+                                                        {typeof item.debug === 'string' ? item.debug : JSON.stringify(item.debug, null, 2)}
+                                                    </pre>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            }
 
-                        {/* Agent 状态卡片 - 创作模式 */}
-                        {mode === 'create' && showArchivistCard && (
-                            <AgentCard
-                                icon={Book}
-                                name="档案员"
-                                status={archivistStatus}
-                                description={
-                                    archivistStatus === 'done'
-                                        ? '场景简报已准备 (点击查看)'
-                                        : archivistStatus === 'working'
-                                            ? '正在整理资料...'
-                                            : ''
-                                }
-                                expandable={archivistStatus === 'done' && archivistOutput}
-                                expandedContent={archivistOutput}
-                            />
-                        )}
+                            return null;
+                        })}
 
-                        {showWriterCard && (
-                            <AgentCard
-                                icon={PenTool}
-                                name="主笔"
-                                status={writerStatus}
-                                description={
-                                    writerStatus === 'done'
-                                        ? '草稿已完成'
-                                        : writerStatus === 'working'
-                                            ? '正在撰写...'
-                                            : ''
-                                }
-                            />
-                        )}
-
-                        {/* Agent 状态卡片 - 编辑模式 */}
-                        {showEditorCard && (
-                            <AgentCard
-                                icon={Edit3}
-                                name="编辑"
-                                status={editorStatus}
-                                description={
-                                    editorStatus === 'done'
-                                        ? '修改建议已生成'
-                                        : editorStatus === 'working'
-                                            ? '正在处理修改意见...'
-                                            : ''
-                                }
-                            />
-                        )}
                     </>
                 )}
 
@@ -249,21 +500,90 @@ const AgentStatusPanel = ({
             </div>
 
             {/* 底部输入框 */}
-            <div className="flex-shrink-0 p-3 border-t border-border bg-background">
+            <div className="flex-shrink-0 p-3 border-t border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
+            <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1">
+                    <button
+                        type="button"
+                        onClick={() => onModeChange('create')}
+                            disabled={createDisabled}
+                            title={createDisabled ? '正文非空：主笔仅在正文为空时可用' : '主笔：用于撰写新正文（流式输出）'}
+                            className={[
+                                "px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors",
+                                mode === 'create'
+                                    ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
+                                    : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
+                                createDisabled ? "opacity-50 cursor-not-allowed" : ""
+                            ].join(' ')}
+                        >
+                        主笔
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onModeChange('edit')}
+                        title="编辑：生成差异块，可选择接受或撤销"
+                            className={[
+                                "px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors",
+                                mode === 'edit'
+                                    ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
+                                    : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]"
+                            ].join(' ')}
+                        >
+                        编辑
+                    </button>
+                    {mode === 'edit' ? (
+                        <div className="ml-2 flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={() => onEditContextModeChange('quick')}
+                                title="快速：直接使用本章最新记忆包（不重建）"
+                                className={[
+                                    "px-2 h-7 text-[11px] rounded-[6px] border transition-colors",
+                                    editContextMode === 'quick'
+                                        ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
+                                        : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]"
+                                ].join(' ')}
+                            >
+                                快速
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => onEditContextModeChange('full')}
+                                title="完整：先重建本章记忆包（更接近完整检索/分析）"
+                                className={[
+                                    "px-2 h-7 text-[11px] rounded-[6px] border transition-colors",
+                                    editContextMode === 'full'
+                                        ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
+                                        : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]"
+                                ].join(' ')}
+                            >
+                                完整
+                            </button>
+                        </div>
+                    ) : null}
+                </div>
+                <span className="text-[10px] text-[var(--vscode-fg-subtle)]">
+                    {mode === 'edit' ? '差异修改' : '流式撰写'}
+                </span>
+                </div>
                 <div className="flex gap-2">
-                    <input
+                    <textarea
                         ref={inputRef}
-                        type="text"
+                        rows={1}
                         value={inputValue}
-                        onChange={(e) => setInputValue(e.target.value)}
+                        onChange={(e) => {
+                            setInputValue(e.target.value);
+                            updateInputHeight(e.target);
+                        }}
                         onKeyDown={handleKeyDown}
-                        placeholder="输入创作指令或修改意见..."
-                        className="flex-1 px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                        onFocus={(e) => updateInputHeight(e.target)}
+                        placeholder={mode === 'edit' ? "输入修改指令（将生成差异块）..." : "输入本章创作指令（正文需为空）..."}
+                        className="flex-1 px-3 py-2 text-sm border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none overflow-hidden min-h-[40px]"
                     />
                     <button
                         onClick={handleSubmit}
                         disabled={!inputValue.trim()}
-                        className="px-3 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="px-3 h-10 bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] rounded-[6px] border border-[var(--vscode-input-border)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                         <Send size={16} />
                     </button>

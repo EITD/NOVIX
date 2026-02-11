@@ -101,6 +101,27 @@ class UpdateContentRequest(BaseModel):
     title: Optional[str] = None
 
 
+class ReorderChaptersRequest(BaseModel):
+    volume_id: str
+    chapter_order: List[str]
+
+
+@router.post("/reorder")
+async def reorder_chapters(project_id: str, body: ReorderChaptersRequest):
+    """Reorder chapters within a volume / 调整分卷内章节顺序"""
+    try:
+        updated = await draft_storage.reorder_chapters(
+            project_id=project_id,
+            volume_id=body.volume_id,
+            chapter_order=body.chapter_order,
+        )
+        return {"success": True, "updated": [s.model_dump(mode="json") for s in updated]}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.put("/{chapter}/content")
 async def update_draft_content(project_id: str, chapter: str, body: UpdateContentRequest):
     """
@@ -116,6 +137,12 @@ async def update_draft_content(project_id: str, chapter: str, body: UpdateConten
         content=body.content,
         word_count=len(body.content),
     )
+
+    try:
+        from app.services.chapter_binding_service import chapter_binding_service
+        await chapter_binding_service.build_bindings(project_id, chapter, force=True)
+    except Exception:
+        pass
 
     canonical = normalize_chapter_id(chapter) or draft.chapter or chapter
     if body.title is not None:

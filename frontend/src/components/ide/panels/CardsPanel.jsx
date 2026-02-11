@@ -1,10 +1,29 @@
-﻿import React, { useEffect, useState } from 'react';
+/**
+ * CardsPanel - 设定卡片面板
+ * 仅做视觉一致性优化，不改变数据与交互逻辑。
+ */
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useIDE } from '../../../context/IDEContext';
 import { useParams } from 'react-router-dom';
 import { cardsAPI } from '../../../api';
 import { Plus, RefreshCw, User, Globe, Trash2, FileText, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '../../ui/core';
+
+const normalizeStars = (value) => {
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed)) return 1;
+  return Math.max(1, Math.min(parsed, 3));
+};
+
+const compareByStarsThenName = (a, b) => {
+  const starDiff = normalizeStars(b?.stars) - normalizeStars(a?.stars);
+  if (starDiff !== 0) return starDiff;
+  return String(a?.name || '').localeCompare(String(b?.name || ''), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+};
 
 export default function CardsPanel() {
   const { projectId } = useParams();
@@ -20,7 +39,7 @@ export default function CardsPanel() {
 
   useEffect(() => {
     loadEntities();
-  }, [projectId]);
+  }, [projectId, state.lastSavedAt]);
 
   const loadEntities = async () => {
     setLoading(true);
@@ -35,9 +54,44 @@ export default function CardsPanel() {
       const worlds = worldsResp.status === 'fulfilled' ? (Array.isArray(worldsResp.value.data) ? worldsResp.value.data : []) : [];
       const style = styleResp.status === 'fulfilled' ? styleResp.value.data : null;
 
+      const characterDetails = await Promise.allSettled(
+        chars.map((name) => cardsAPI.getCharacter(projectId, name))
+      );
+      const worldDetails = await Promise.allSettled(
+        worlds.map((name) => cardsAPI.getWorld(projectId, name))
+      );
+
+      const characterMap = new Map();
+      for (const result of characterDetails) {
+        if (result.status === 'fulfilled') {
+          const card = result.value?.data;
+          if (card?.name) {
+            characterMap.set(card.name, card);
+          }
+        }
+      }
+
+      const worldMap = new Map();
+      for (const result of worldDetails) {
+        if (result.status === 'fulfilled') {
+          const card = result.value?.data;
+          if (card?.name) {
+            worldMap.set(card.name, card);
+          }
+        }
+      }
+
       const combined = [
-        ...chars.map(name => ({ name, type: 'character' })),
-        ...worlds.map(name => ({ name, type: 'world' }))
+        ...chars.map(name => ({
+          name,
+          type: 'character',
+          stars: normalizeStars(characterMap.get(name)?.stars)
+        })),
+        ...worlds.map(name => ({
+          name,
+          type: 'world',
+          stars: normalizeStars(worldMap.get(name)?.stars)
+        }))
       ];
 
       setEntities(combined);
@@ -106,18 +160,23 @@ export default function CardsPanel() {
     }
   };
 
-  const filteredEntities = entities.filter(e => e.type === typeFilter);
+  const filteredEntities = useMemo(() => {
+    return entities
+      .filter((entity) => entity.type === typeFilter)
+      .slice()
+      .sort(compareByStarsThenName);
+  }, [entities, typeFilter]);
 
   const getCardIcon = (type) => {
     switch (type) {
       case 'character':
-        return <User size={14} className="text-indigo-500" />;
+        return <User size={14} className="text-[var(--vscode-fg-subtle)]" />;
       case 'world':
-        return <Globe size={14} className="text-emerald-500" />;
+        return <Globe size={14} className="text-[var(--vscode-fg-subtle)]" />;
       case 'style':
-        return <FileText size={14} className="text-amber-500" />;
+        return <FileText size={14} className="text-[var(--vscode-fg-subtle)]" />;
       default:
-        return <FileText size={14} className="text-ink-400" />;
+        return <FileText size={14} className="text-[var(--vscode-fg-subtle)]" />;
     }
   };
 
@@ -130,18 +189,18 @@ export default function CardsPanel() {
   const currentIndex = typeOptions.findIndex(opt => opt.id === typeFilter);
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="p-2 border-b border-border/50">
+    <div className="anti-theme h-full flex flex-col bg-[var(--vscode-bg)] text-[var(--vscode-fg)]">
+      <div className="p-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-bold uppercase tracking-wider pl-2 text-ink-500">卡片库</span>
+          <span className="text-xs font-bold uppercase tracking-wider pl-2 text-[var(--vscode-fg-subtle)]">卡片库</span>
           <div className="flex gap-1">
-            <button onClick={loadEntities} className="p-1 hover:bg-black/5 rounded" title="刷新">
+            <button onClick={loadEntities} className="p-1 hover:bg-[var(--vscode-list-hover)] rounded-[4px]" title="刷新">
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
             </button>
             {typeFilter !== 'style' && (
               <button
                 onClick={handleCreateCard}
-                className="p-1 hover:bg-black/5 rounded"
+                className="p-1 hover:bg-[var(--vscode-list-hover)] rounded-[4px]"
                 title="新建卡片"
               >
                 <Plus size={12} />
@@ -151,9 +210,9 @@ export default function CardsPanel() {
         </div>
 
         <div className="px-1 py-1">
-          <div className="relative bg-ink-50 rounded-full p-0.5 border border-border/30">
+          <div className="relative bg-[var(--vscode-bg)] rounded-[6px] p-0.5 border border-[var(--vscode-sidebar-border)]">
             <motion.div
-              className="absolute top-0.5 bottom-0.5 bg-primary rounded-full shadow-sm"
+              className="absolute top-0.5 bottom-0.5 bg-[var(--vscode-list-active)] rounded-[4px]"
               initial={false}
               animate={{
                 left: `calc(${currentIndex * 33.333}% + 2px)`,
@@ -171,8 +230,8 @@ export default function CardsPanel() {
                     key={opt.id}
                     onClick={() => setTypeFilter(opt.id)}
                     className={cn(
-                      'flex-1 relative z-10 py-1 px-2 text-[10px] font-medium rounded-full transition-colors duration-200',
-                      isActive ? 'text-white' : 'text-ink-500 hover:text-ink-700'
+                      'flex-1 relative z-10 py-1 px-2 text-[10px] font-medium rounded-[4px] transition-none',
+                      isActive ? 'text-[var(--vscode-list-active-fg)]' : 'text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]'
                     )}
                   >
                     <div className="flex items-center justify-center gap-1">
@@ -192,17 +251,17 @@ export default function CardsPanel() {
           <div className="space-y-2">
             <div
               onClick={() => setStyleExpanded(!styleExpanded)}
-              className="flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-ink-50 transition-colors"
+              className="flex items-center gap-2 p-2 rounded-[6px] cursor-pointer hover:bg-[var(--vscode-list-hover)] transition-none"
             >
               {styleExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              <FileText size={14} className="text-amber-500" />
+              <FileText size={14} className="text-[var(--vscode-fg-subtle)]" />
               <span className="text-sm font-medium flex-1">文风设定</span>
             </div>
 
             {styleExpanded && (
               <div className="pl-6 pr-2 space-y-3 pb-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-ink-500 uppercase">文风</label>
+                  <label className="text-[10px] font-bold text-[var(--vscode-fg-subtle)] uppercase">文风</label>
                   <textarea
                     value={styleCard.style || ''}
                     onChange={e => {
@@ -215,17 +274,17 @@ export default function CardsPanel() {
                       e.target.style.height = 'auto';
                       e.target.style.height = e.target.scrollHeight + 'px';
                     }}
-                    className="w-full text-xs p-2 border border-border rounded bg-surface/50 focus:border-primary focus:ring-1 focus:ring-primary/20 min-h-[120px] resize-none overflow-hidden"
+                    className="w-full text-xs p-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:border-[var(--vscode-focus-border)] focus:ring-1 focus:ring-[var(--vscode-focus-border)] min-h-[120px] resize-none overflow-hidden"
                     placeholder="写作风格要求..."
                   />
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-bold text-ink-500 uppercase">AI 文风提炼</label>
+                    <label className="text-[10px] font-bold text-[var(--vscode-fg-subtle)] uppercase">文风提炼</label>
                     <button
                       type="button"
                       onClick={handleExtractStyle}
-                      className="text-[10px] px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-60"
+                      className="text-[10px] px-2 py-1 rounded-[4px] border border-[var(--vscode-input-border)] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] disabled:opacity-60"
                       disabled={styleExtracting}
                     >
                       {styleExtracting ? '提炼中...' : '提炼并覆盖'}
@@ -234,7 +293,7 @@ export default function CardsPanel() {
                   <textarea
                     value={styleSample}
                     onChange={e => setStyleSample(e.target.value)}
-                    className="w-full text-xs p-2 border border-border rounded bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 min-h-[90px] resize-none overflow-hidden"
+                    className="w-full text-xs p-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:border-[var(--vscode-focus-border)] focus:ring-1 focus:ring-[var(--vscode-focus-border)] min-h-[90px] resize-none overflow-hidden"
                     placeholder="粘贴喜欢的文本片段"
                   />
                 </div>
@@ -246,7 +305,7 @@ export default function CardsPanel() {
         {typeFilter !== 'style' && (
           <>
             {filteredEntities.length === 0 && !loading && (
-              <div className="text-center text-xs text-ink-400 py-8">
+              <div className="text-center text-xs text-[var(--vscode-fg-subtle)] py-8">
                 <p>暂无{typeOptions.find(opt => opt.id === typeFilter)?.label}卡片</p>
                 <p className="text-[10px] mt-2 opacity-60">点击右上角 + 创建卡片</p>
               </div>
@@ -266,9 +325,9 @@ export default function CardsPanel() {
                       payload: { type: entity.type || 'card', id: entity.name, data: entity }
                     })}
                     className={cn(
-                      'flex items-start gap-2 px-2 py-2 rounded cursor-pointer hover:bg-ink-50 group border border-transparent hover:border-border/50 transition-all',
+                      'flex items-start gap-2 px-2 py-2 rounded-[6px] cursor-pointer hover:bg-[var(--vscode-list-hover)] group border border-transparent transition-none',
                       state.activeDocument?.id === entity.name && state.activeDocument?.type === (entity.type || 'card')
-                        ? 'bg-primary/10 border-primary/20'
+                        ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]'
                         : ''
                     )}
                   >
@@ -276,11 +335,14 @@ export default function CardsPanel() {
                       {getCardIcon(entity.type)}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-ink-700 leading-none mb-1">{entity.name}</div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium leading-none mb-1">{entity.name}</div>
+                        <div className="text-[10px] opacity-70">{`${normalizeStars(entity.stars)}星`}</div>
+                      </div>
                     </div>
                     <button
                       onClick={(e) => handleDeleteCard(entity, e)}
-                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded text-ink-400 hover:text-red-500 transition-all"
+                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded-[4px] text-[var(--vscode-fg-subtle)] hover:text-red-500 transition-none"
                       title="删除卡片"
                     >
                       <Trash2 size={12} />

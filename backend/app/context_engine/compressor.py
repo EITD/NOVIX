@@ -6,6 +6,7 @@ Compresses context to fit within token budget
 
 from typing import List, Dict, Any
 from app.llm_gateway.gateway import get_gateway
+from app.prompts import compress_summaries_prompt
 
 
 class ContextCompressor:
@@ -53,25 +54,10 @@ class ContextCompressor:
             for s in summaries
         ])
         
+        prompt = compress_summaries_prompt(summaries_text=summaries_text, target_length=target_length)
         messages = [
-            {
-                "role": "system",
-                "content": "You are a text compressor. Compress the given summaries while preserving key information."
-            },
-            {
-                "role": "user",
-                "content": f"""Compress these chapter summaries to approximately {target_length} characters:
-
-{summaries_text}
-
-Focus on:
-- Key plot developments
-- Character changes
-- Important facts
-
-Output only the compressed summary, no explanation.
-将这些章节摘要压缩到约{target_length}字，聚焦于关键情节、角色变化和重要事实。只输出压缩后的摘要。"""
-            }
+            {"role": "system", "content": prompt.system},
+            {"role": "user", "content": prompt.user},
         ]
         
         gateway = get_gateway()

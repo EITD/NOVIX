@@ -1,35 +1,39 @@
-
 import React from 'react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
+/**
+ * cn - 类名合并工具
+ * 负责组合 Tailwind 与条件类名。
+ */
 export function cn(...inputs) {
     return twMerge(clsx(inputs));
 }
 
-import { motion } from 'framer-motion';
 
+/**
+ * Button - 基础按钮组件
+ * 仅负责样式与交互态，不改变业务语义。
+ */
 export const Button = React.forwardRef(({ className, variant = 'default', size = 'default', ...props }, ref) => {
     const variants = {
-        default: 'bg-primary text-white hover:bg-primary-hover shadow-sm',
-        ghost: 'bg-transparent text-ink-500 hover:bg-primary-light hover:text-ink-900',
-        outline: 'bg-transparent border border-border text-ink-900 hover:bg-primary-light',
-        link: 'text-primary underline-offset-4 hover:underline',
+        default: 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border border-[var(--vscode-input-border)] hover:opacity-90 shadow-none',
+        ghost: 'bg-transparent text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)]',
+        outline: 'bg-transparent border border-[var(--vscode-input-border)] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)]',
+        link: 'text-[var(--vscode-focus-border)] underline-offset-4 hover:underline',
     };
 
     const sizes = {
-        default: 'h-10 px-4 py-2',
-        sm: 'h-9 rounded-md px-3',
-        lg: 'h-11 rounded-md px-8',
+        default: 'h-10 px-4',
+        sm: 'h-9 px-3',
+        lg: 'h-11 px-6',
         icon: 'h-10 w-10',
     };
 
     return (
-        <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
+        <button
             className={cn(
-                'inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+                'inline-flex items-center justify-center whitespace-nowrap rounded-[4px] text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--vscode-focus-border)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 select-none',
                 variants[variant],
                 sizes[size],
                 className
@@ -41,12 +45,16 @@ export const Button = React.forwardRef(({ className, variant = 'default', size =
 });
 Button.displayName = "Button";
 
+/**
+ * Input - 基础输入组件
+ * 仅负责输入样式与焦点态。
+ */
 export const Input = React.forwardRef(({ className, type, ...props }, ref) => {
     return (
         <input
             type={type}
             className={cn(
-                "flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-ink-400 focus-visible:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-300 ease-out hover:border-primary/50",
+                "flex h-10 w-full rounded-[4px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] px-3 text-sm text-[var(--vscode-fg)] ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-[var(--vscode-fg-subtle)] focus-visible:outline-none focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-1 focus-visible:ring-[var(--vscode-focus-border)] disabled:cursor-not-allowed disabled:opacity-50 transition-colors",
                 className
             )}
             ref={ref}
@@ -56,12 +64,16 @@ export const Input = React.forwardRef(({ className, type, ...props }, ref) => {
 });
 Input.displayName = "Input";
 
+/**
+ * Card - 基础容器组件
+ * 提供统一边界与背景层级。
+ */
 export const Card = React.forwardRef(({ className, ...props }, ref) => {
     return (
         <div
             ref={ref}
             className={cn(
-                "rounded-lg bg-surface text-ink-900 shadow-paper border border-border",
+                "rounded-[4px] bg-[var(--vscode-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-sidebar-border)] shadow-none",
                 className
             )}
             {...props}

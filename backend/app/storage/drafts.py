@@ -45,6 +45,98 @@ class DraftStorage(BaseStorage):
                     return path.name
         return canonical
 
+    def get_chapter_draft_dir(self, project_id: str, chapter: str) -> Path:
+        """Resolve the draft directory for a chapter.
+
+        Args:
+            project_id: Project id.
+            chapter: Chapter id.
+
+        Returns:
+            Draft directory path.
+        """
+        resolved = self._resolve_chapter_dir_name(project_id, chapter)
+        return self.get_project_path(project_id) / "drafts" / resolved
+
+    def get_latest_draft_file(self, project_id: str, chapter: str) -> Optional[Path]:
+        """Return the most recently modified draft file for a chapter.
+
+        Args:
+            project_id: Project id.
+            chapter: Chapter id.
+
+        Returns:
+            Path to latest draft file if present.
+        """
+        draft_dir = self.get_chapter_draft_dir(project_id, chapter)
+        if not draft_dir.exists():
+            return None
+        candidates = list(draft_dir.glob("draft_*.md"))
+        final_path = draft_dir / "final.md"
+        if final_path.exists():
+            candidates.append(final_path)
+        if not candidates:
+            return None
+        return max(candidates, key=lambda path: path.stat().st_mtime)
+
+    async def get_chapter_tail_chunks(
+        self,
+        project_id: str,
+        chapter: str,
+        limit: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """Return tail text chunks from the latest draft of a chapter.
+
+        Args:
+            project_id: Project id.
+            chapter: Chapter id.
+            limit: Number of tail chunks to return.
+
+        Returns:
+            List of tail text chunk payloads.
+        """
+        limit = max(int(limit or 0), 0)
+        if limit <= 0:
+            return []
+
+        draft_path = self.get_latest_draft_file(project_id, chapter)
+        if not draft_path or not draft_path.exists():
+            return []
+
+        try:
+            text = await self.read_text(draft_path)
+        except Exception:
+            return []
+
+        from app.services.text_chunk_service import text_chunk_service
+
+        chunks = text_chunk_service.split_text_to_chunks(text)
+        if not chunks:
+            return []
+
+        rel_path = draft_path.relative_to(self.get_project_path(project_id)).as_posix()
+        draft_label = "final" if draft_path.name == "final.md" else draft_path.stem.replace("draft_", "")
+        tail_chunks = chunks[-limit:]
+        payloads = []
+        for chunk in tail_chunks:
+            payloads.append(
+                {
+                    "text": chunk.get("text"),
+                    "chapter": chapter,
+                    "source": {
+                        "chapter": chapter,
+                        "draft": draft_label,
+                        "path": rel_path,
+                        "paragraph": chunk.get("paragraph"),
+                        "window": chunk.get("window"),
+                        "start": chunk.get("start"),
+                        "end": chunk.get("end"),
+                        "tail": True,
+                    },
+                }
+            )
+        return payloads
+
     def _migrate_chapter_dir(self, project_id: str, chapter: str, canonical: str) -> None:
         drafts_dir = self.get_project_path(project_id) / "drafts"
         if not drafts_dir.exists():
@@ -267,7 +359,13 @@ class DraftStorage(BaseStorage):
             except Exception:
                 continue
 
-        ordered = sorted(summaries.values(), key=lambda summary: ChapterIDValidator.calculate_weight(summary.chapter))
+        def summary_sort_key(summary: ChapterSummary):
+            vol_weight = self._volume_sort_weight(summary.volume_id)
+            order_weight = summary.order_index if isinstance(summary.order_index, int) else 10**9
+            chapter_weight = ChapterIDValidator.calculate_weight(summary.chapter)
+            return (vol_weight, order_weight, chapter_weight)
+
+        ordered = sorted(summaries.values(), key=summary_sort_key)
         return ordered
 
     async def list_chapters(self, project_id: str) -> List[str]:
@@ -286,7 +384,27 @@ class DraftStorage(BaseStorage):
                 continue
             seen.add(canonical)
             chapters.append(canonical)
-        return ChapterIDValidator.sort_chapters(chapters)
+        # If user has customized chapter order (via ChapterSummary.order_index),
+        # we respect it; otherwise fallback to chapter id weight ordering.
+        try:
+            summaries = await self.list_chapter_summaries(project_id)
+        except Exception:
+            summaries = []
+
+        summary_map: Dict[str, ChapterSummary] = {}
+        for s in summaries:
+            if s and s.chapter:
+                summary_map[self._canonicalize_chapter_id(s.chapter)] = s
+
+        def chapter_sort_key(chapter_id: str):
+            summary = summary_map.get(chapter_id)
+            vol_id = (summary.volume_id if summary else None) or (ChapterIDValidator.extract_volume_id(chapter_id) or "V1")
+            vol_weight = self._volume_sort_weight(vol_id)
+            order_weight = summary.order_index if summary and isinstance(summary.order_index, int) else 10**9
+            chapter_weight = ChapterIDValidator.calculate_weight(chapter_id)
+            return (vol_weight, order_weight, chapter_weight)
+
+        return sorted(chapters, key=chapter_sort_key)
 
     async def delete_chapter(self, project_id: str, chapter: str) -> bool:
         """Delete all draft artifacts for a chapter."""
@@ -324,6 +442,59 @@ class DraftStorage(BaseStorage):
                 summaries.append(summary)
         return summaries
 
+    async def search_text_chunks(
+        self,
+        project_id: str,
+        query: str,
+        limit: int = 8,
+        queries: Optional[List[str]] = None,
+        chapters: Optional[List[str]] = None,
+        exclude_chapters: Optional[List[str]] = None,
+        rebuild: bool = False,
+        semantic_rerank: bool = False,
+        rerank_query: Optional[str] = None,
+        rerank_top_k: int = 16,
+    ) -> List[Dict[str, Any]]:
+        """Search indexed text chunks for a query.
+
+        Args:
+            project_id: Project id.
+            query: Query string.
+            limit: Max results.
+            chapters: Chapter whitelist.
+            exclude_chapters: Chapter blacklist.
+            rebuild: Force rebuild index.
+
+        Returns:
+            Ranked text chunk hits.
+        """
+        from app.services.text_chunk_service import text_chunk_service
+        return await text_chunk_service.search(
+            project_id=project_id,
+            query=query,
+            limit=limit,
+            queries=queries,
+            chapters=chapters,
+            exclude_chapters=exclude_chapters,
+            rebuild=rebuild,
+            semantic_rerank=semantic_rerank,
+            rerank_query=rerank_query,
+            rerank_top_k=rerank_top_k,
+        )
+
+    async def rebuild_text_chunk_index(self, project_id: str) -> Dict[str, Any]:
+        """Force rebuild of text chunk index.
+
+        Args:
+            project_id: Project id.
+
+        Returns:
+            Index metadata.
+        """
+        from app.services.text_chunk_service import text_chunk_service
+        meta = await text_chunk_service.build_index(project_id, force=True)
+        return meta.model_dump(mode="json")
+
     async def save_conflict_report(self, project_id: str, chapter: str, report: Dict[str, Any]) -> None:
         """Save a conflict report."""
         canonical = self._canonicalize_chapter_id(chapter)
@@ -336,3 +507,50 @@ class DraftStorage(BaseStorage):
         if not summary.volume_id:
             summary.volume_id = ChapterIDValidator.extract_volume_id(summary.chapter) or "V1"
         return summary
+
+    def _volume_sort_weight(self, volume_id: Optional[str]) -> int:
+        """Sort helper for volume ids like V1, V2..."""
+        raw = str(volume_id or "").strip().upper()
+        if raw.startswith("V"):
+            try:
+                return int(raw[1:])
+            except Exception:
+                return 0
+        return 0
+
+    async def reorder_chapters(self, project_id: str, volume_id: str, chapter_order: List[str]) -> List[ChapterSummary]:
+        """
+        Persist chapter order within a volume by writing ChapterSummary.order_index.
+
+        Args:
+            project_id: Project id.
+            volume_id: Target volume id (e.g., V1).
+            chapter_order: Ordered chapter ids (canonical).
+
+        Returns:
+            Updated summaries for chapters in the provided order.
+        """
+        canonical_volume = (str(volume_id or "").strip().upper() or "V1")
+        chapter_order = [self._canonicalize_chapter_id(ch) for ch in (chapter_order or []) if str(ch or "").strip()]
+        if not chapter_order:
+            return []
+
+        existing_chapters = set(await self.list_chapters(project_id))
+        for ch in chapter_order:
+            if ch not in existing_chapters:
+                raise ValueError(f"章节不存在：{ch}")
+            inferred_volume = ChapterIDValidator.extract_volume_id(ch) or "V1"
+            if str(inferred_volume).strip().upper() != canonical_volume:
+                raise ValueError(f"章节 {ch} 不属于分卷 {canonical_volume}")
+
+        updated: List[ChapterSummary] = []
+        for idx, chapter_id in enumerate(chapter_order, start=1):
+            summary = await self.get_chapter_summary(project_id, chapter_id)
+            if not summary:
+                summary = ChapterSummary(chapter=chapter_id, volume_id=canonical_volume, title="", word_count=0)
+            summary.chapter = self._canonicalize_chapter_id(summary.chapter)
+            summary.volume_id = canonical_volume
+            summary.order_index = idx
+            await self.save_chapter_summary(project_id, summary)
+            updated.append(summary)
+        return updated

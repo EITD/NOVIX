@@ -4,8 +4,9 @@ Revises drafts based on user feedback
 鏍规嵁鐢ㄦ埛鍙嶉淇鑽夌
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.agents.base import BaseAgent
+from app.prompts import EDITOR_REJECTED_CONCEPTS_INSTRUCTION, EDITOR_SYSTEM_PROMPT, editor_revision_prompt
 from app.utils.logger import get_logger
 from app.utils.version import increment_version
 
@@ -24,14 +25,7 @@ class EditorAgent(BaseAgent):
 
     def get_system_prompt(self) -> str:
         """Get system prompt / 鑾峰彇绯荤粺鎻愮ず璇?"""
-        return (
-            "你是编辑（Editor）。\n"
-            "职责：\n"
-            "1) 严格按用户反馈修改，只改涉及的部分；\n"
-            "2) 维持作者原有文风与语气，润色流畅度；\n"
-            "3) 不引入新设定与矛盾。\n"
-            "输出：仅输出修改后的正文，确保改动可见且满足反馈。"
-        )
+        return EDITOR_SYSTEM_PROMPT
 
     async def execute(
         self,
@@ -68,12 +62,14 @@ class EditorAgent(BaseAgent):
 
         style_card = await self.card_storage.get_style_card(project_id)
         rejected_entities = context.get("rejected_entities", [])
+        memory_pack = context.get("memory_pack")
 
         revised_content = await self._generate_revision_from_feedback(
             original_draft=draft.content,
             user_feedback=user_feedback,
             style_card=style_card,
-            rejected_entities=rejected_entities
+            rejected_entities=rejected_entities,
+            memory_pack=memory_pack,
         )
 
         new_version = increment_version(draft_version)
@@ -100,7 +96,9 @@ class EditorAgent(BaseAgent):
         original_draft: str,
         user_feedback: str,
         style_card: Any = None,
-        rejected_entities: List[str] = None
+        rejected_entities: List[str] = None,
+        memory_pack: Optional[Dict[str, Any]] = None,
+        config_agent: str = None,
     ) -> str:
         """
         Generate revised draft directly from user feedback
@@ -118,29 +116,190 @@ class EditorAgent(BaseAgent):
 
         if rejected_entities:
             context_items.append(
-                "Rejected Concepts: " + ", ".join(rejected_entities) + "\n"
-                "You MUST remove or rewrite any rejected concepts."
+                "被拒绝概念：" + ", ".join(rejected_entities) + "\n" + EDITOR_REJECTED_CONCEPTS_INSTRUCTION
             )
+        if memory_pack:
+            context_items.extend(self._format_memory_pack_context(memory_pack))
 
-        user_prompt = f"""你是编辑，必须100%执行用户修改意见，只改涉及部分且改动可见。
-规则：
-- 不得拒绝或敷衍，必须体现修改。
-- 未被提及的内容保持不变；禁止新增设定或剧情。
-- 如反馈是风格类请求，需在全文体现相应变化。
-
-原稿：
-{original_draft}
-
-用户反馈：
-{user_feedback}
-
-输出：仅输出修改后的正文。"""
+        prompt = editor_revision_prompt(original_draft=original_draft, user_feedback=user_feedback)
 
         messages = self.build_messages(
-            system_prompt=self.get_system_prompt(),
-            user_prompt=user_prompt,
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
             context_items=context_items
         )
 
-        response = await self.call_llm(messages)
+        response = await self.call_llm(messages, config_agent=config_agent)
         return response.strip()
+
+    async def suggest_revision(
+        self,
+        project_id: str,
+        original_draft: str,
+        user_feedback: str,
+        rejected_entities: List[str] = None,
+        memory_pack: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Suggest a revision without persisting it.
+        生成“修改建议”，不写入草稿版本（用于前端未保存内容的 Diff 预览）。
+        """
+        if original_draft is None:
+            original_draft = ""
+        if not user_feedback:
+            raise ValueError("User feedback is required")
+
+        style_card = await self.card_storage.get_style_card(project_id)
+        return await self._generate_revision_from_feedback(
+            original_draft=original_draft,
+            user_feedback=user_feedback,
+            style_card=style_card,
+            rejected_entities=rejected_entities or [],
+            memory_pack=memory_pack,
+            config_agent="writer",
+        )
+
+    def _format_memory_pack_context(self, memory_pack: Dict[str, Any]) -> List[str]:
+        """Format memory pack into compact context items for the editor."""
+        payload: Any = {}
+        if isinstance(memory_pack, dict):
+            payload = memory_pack.get("payload") or memory_pack.get("working_memory_payload") or {}
+            if not payload and any(key in memory_pack for key in ("working_memory", "evidence_pack", "unresolved_gaps")):
+                # Backward/compat: Orchestrator may pass the payload dict directly.
+                payload = memory_pack
+        if not isinstance(payload, dict):
+            payload = {}
+
+        context_items: List[str] = []
+
+        working_memory = payload.get("working_memory")
+        if working_memory:
+            context_items.append("工作记忆：\n" + str(working_memory).strip())
+
+        evidence_pack = payload.get("evidence_pack") or {}
+        evidence_items = evidence_pack.get("items") or []
+        if evidence_items:
+            def _score(item: Dict[str, Any]) -> float:
+                try:
+                    return float(item.get("score") or 0)
+                except Exception:
+                    return 0.0
+
+            ordered = [item for item in evidence_items if isinstance(item, dict)]
+            ordered.sort(key=_score, reverse=True)
+            lines = []
+            for item in ordered:
+                text = str(item.get("text") or "").strip()
+                if not text:
+                    continue
+                item_type = str(item.get("type") or "evidence")
+                source = item.get("source") or {}
+                source_parts = [
+                    source.get("chapter"),
+                    source.get("draft"),
+                    source.get("path"),
+                    source.get("field"),
+                    source.get("fact_id"),
+                    source.get("card"),
+                    source.get("introduced_in"),
+                ]
+                source_label = " / ".join([str(part) for part in source_parts if part])
+                line = f"[{item_type}] {text}"
+                if source_label:
+                    line += f" ({source_label})"
+                lines.append(line)
+                if len(lines) >= 6:
+                    break
+            if lines:
+                context_items.append("证据摘录：\n" + "\n".join(lines))
+
+        unresolved_gaps = payload.get("unresolved_gaps") or []
+        if unresolved_gaps:
+            gap_lines = []
+            for gap in unresolved_gaps[:6]:
+                if isinstance(gap, dict):
+                    text = str(gap.get("text") or "").strip()
+                else:
+                    text = str(gap or "").strip()
+                if text:
+                    gap_lines.append(f"- {text}")
+            if gap_lines:
+                context_items.append("待确认缺口：\n" + "\n".join(gap_lines))
+
+        snapshot = None
+        if isinstance(memory_pack, dict):
+            snapshot = memory_pack.get("card_snapshot")
+        if isinstance(snapshot, dict):
+            context_items.extend(self._format_card_snapshot(snapshot))
+
+        return context_items
+
+    def _format_card_snapshot(self, snapshot: Dict[str, Any]) -> List[str]:
+        characters = snapshot.get("characters") or []
+        world = snapshot.get("world") or []
+        style = snapshot.get("style")
+
+        context_items: List[str] = []
+
+        if characters:
+            lines = []
+            for item in characters[:8]:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                if not name:
+                    continue
+                stars = item.get("stars")
+                star_label = f"★{stars}" if stars else ""
+                appearance = str(item.get("appearance") or "").strip()
+                identity = str(item.get("identity") or "").strip()
+                aliases = item.get("aliases") or []
+                alias_text = "、".join([str(a).strip() for a in aliases if str(a).strip()][:4])
+                parts = []
+                if identity:
+                    parts.append(f"身份：{identity}")
+                if appearance:
+                    parts.append(f"外貌：{appearance}")
+                if alias_text:
+                    parts.append(f"别名：{alias_text}")
+                line = f"- {name}{star_label}"
+                if parts:
+                    line += "（" + "；".join(parts) + "）"
+                lines.append(line)
+            if lines:
+                context_items.append("角色设定（快照）：\n" + "\n".join(lines))
+
+        if world:
+            lines = []
+            for item in world[:8]:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                if not name:
+                    continue
+                stars = item.get("stars")
+                star_label = f"★{stars}" if stars else ""
+                category = str(item.get("category") or "").strip()
+                immutable = item.get("immutable")
+                rules = item.get("rules") or []
+                rule_text = "；".join([str(r).strip() for r in rules if str(r).strip()][:3])
+                parts = []
+                if category:
+                    parts.append(f"类别：{category}")
+                if isinstance(immutable, bool):
+                    parts.append("不可变" if immutable else "可变")
+                if rule_text:
+                    parts.append(f"规则：{rule_text}")
+                line = f"- {name}{star_label}"
+                if parts:
+                    line += "（" + "；".join(parts) + "）"
+                lines.append(line)
+            if lines:
+                context_items.append("世界设定（快照）：\n" + "\n".join(lines))
+
+        if isinstance(style, dict):
+            style_text = str(style.get("style") or "").strip()
+            if style_text:
+                context_items.append("文风卡（快照）：\n" + style_text[:800])
+
+        return context_items

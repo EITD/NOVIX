@@ -1,43 +1,190 @@
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: light; /* Default to light mode */
+/*
+ * Antigravity 全局主题 Token
+ * 简洁、低噪声、弱边界
+ */
+@layer base {
+  :root {
+    /* Core Backgrounds */
+    --vscode-bg: #F6F0E6;
+    /* Main Editor BG */
+    --vscode-sidebar-bg: #EFE7D8;
+    /* Activity Bar / Sidebar */
+    --vscode-sidebar-border: #E0D6C5;
+
+    /* Lists & Trees */
+    --vscode-list-hover: #E8DFCE;
+    --vscode-list-active: #DCCFB7;
+    /* Warm selection */
+    --vscode-list-active-fg: #2B2A27;
+    --vscode-list-inactive-selection: #E9DFC9;
+
+    /* Text */
+    --vscode-fg: #2B2A27;
+    --vscode-fg-subtle: #6F6A60;
+
+    /* UI Elements */
+    --vscode-input-bg: #FBF6ED;
+    --vscode-input-border: #D8CDBB;
+    --vscode-focus-border: #2F6FDB;
+    --vscode-guide: #E2D7C4;
+    /* Indentation Guide */
+
+    /* Misc */
+    --radius-sm: 2px;
+    /* Very subtle rounding */
+    --radius-md: 4px;
+
+  }
+
+  /* Antigravity scoped theme（保留局部覆盖能力） */
+  .anti-theme {
+    --vscode-bg: #F6F0E6;
+    --vscode-sidebar-bg: #EFE7D8;
+    --vscode-sidebar-border: #E0D6C5;
+
+    --vscode-list-hover: #E8DFCE;
+    --vscode-list-active: #DCCFB7;
+    --vscode-list-active-fg: #2B2A27;
+    --vscode-list-inactive-selection: #E9DFC9;
+
+    --vscode-fg: #2B2A27;
+    --vscode-fg-subtle: #6F6A60;
+
+    --vscode-input-bg: #FBF6ED;
+    --vscode-input-border: #D8CDBB;
+    --vscode-focus-border: #2F6FDB;
+    --vscode-guide: #E2D7C4;
+
+    --radius-sm: 2px;
+    --radius-md: 4px;
+  }
+
+  body {
+    @apply bg-[var(--vscode-bg)] text-[var(--vscode-fg)] font-sans antialiased overflow-hidden selection:bg-[var(--vscode-focus-border)] selection:text-white;
+    font-size: 13px;
+    /* Smaller standard font size */
+    line-height: 1.4;
+  }
+
+  /* Scrollbars - VS Code Style (Minimal overlay) */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-transparent;
+  }
+
+  :hover::-webkit-scrollbar-thumb {
+    @apply bg-black/20;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  /* Logo 字体：志莽行书（本地字体文件） */
+  @font-face {
+    font-family: "ZhiMangXing";
+    src: url("/fonts/ZhiMangXing-Regular.ttf") format("truetype");
+    font-display: swap;
+    font-style: normal;
+    font-weight: 400;
+  }
+
 }
 
-html, body {
-  @apply bg-background text-ink-900 antialiased;
-  font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
-  height: 100%;
-  overflow-x: hidden;
+@layer components {
+  .brand-logo {
+    font-family: "ZhiMangXing", "Weibei SC", "STXingkai", "FZShuTi", "STLiti", "HanziPen SC", "Kaiti SC", "KaiTi", serif;
+    letter-spacing: 0.06em;
+    font-weight: 400;
+  }
+
+  /* VS Code Command Palette Style Dialog */
+  .vscode-command-palette {
+    @apply fixed top-0 left-1/2 -translate-x-1/2 mt-2 w-[600px] max-w-[90vw] bg-[var(--vscode-input-bg)] shadow-2xl border border-[var(--vscode-input-border)] rounded-[var(--radius-md)] text-[var(--vscode-fg)] overflow-hidden;
+    /* No blur, hard shadow */
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  }
+
+  /* Tree Item Standard */
+  .vscode-tree-item {
+    @apply relative flex items-center w-full px-3 h-[24px] cursor-pointer border border-transparent outline-none select-none text-[13px] whitespace-nowrap overflow-hidden text-ellipsis z-10 rounded-[4px];
+  }
+
+  .vscode-tree-item:hover {
+    @apply bg-[var(--vscode-list-hover)];
+  }
+
+  .vscode-tree-item.selected {
+    background-color: var(--vscode-list-active) !important;
+    color: var(--vscode-list-active-fg) !important;
+  }
+
+  /* Explorer 选中态：纯直角（仿 Anti 的方正选中条） */
+  .explorer-panel .vscode-tree-item.selected {
+    border-radius: 0 !important;
+  }
+
+  .vscode-tree-item:focus-visible {
+    outline: 1px solid var(--vscode-focus-border);
+    outline-offset: -1px;
+  }
+
+  /* Indent Guide Line */
+  .indent-guide {
+    @apply absolute left-0 top-0 bottom-0 w-px bg-[var(--vscode-guide)] ml-[11px];
+    /* Position needs calc based on indent level, usually handled in component */
+  }
+
+  .ws-paper {
+    @apply bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-sidebar-border)] rounded-[4px];
+    box-shadow: none;
+  }
+
+  .glass-panel {
+    @apply bg-[var(--vscode-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-sidebar-border)] rounded-[4px];
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+    backdrop-filter: none;
+  }
+
+  .shadow-elevate {
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  }
+
+  .soft-dropdown {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
 }
 
-/* Elegant Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
+@layer utilities {
+  .clip-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-ink-900 to-ink-700;
+  }
 
-::-webkit-scrollbar-track {
-  @apply bg-transparent;
-}
+  /* 滚动条：尽可能弱化存在（尤其是 Firefox） */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
 
-::-webkit-scrollbar-thumb {
-  @apply bg-gray-200 rounded-full hover:bg-gray-300 transition-colors;
-}
+  .custom-scrollbar:hover {
+    scrollbar-color: rgba(0, 0, 0, 0.25) transparent;
+  }
 
-/* Typography Enhancements */
-h1, h2, h3, h4, h5, h6 {
-  @apply font-serif font-medium tracking-tight text-ink-900;
-}
+  /* 防止展开/收起时滚动条“抽搐”引发的布局抖动 */
+  .facts-scroll {
+    scrollbar-gutter: stable;
+  }
 
-/* Selection */
-::selection {
-  @apply bg-accent-active/20 text-ink-900;
-}
-
-/* Animation Utilities */
-.transition-smooth {
-  @apply transition-all duration-300 ease-out;
+  .facts-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
 }

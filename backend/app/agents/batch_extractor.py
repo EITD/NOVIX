@@ -2,6 +2,7 @@
 import json
 from app.schemas.draft import CardProposal
 from app.llm_gateway.gateway import get_gateway
+from app.prompts import BATCH_EXTRACTOR_SYSTEM_PROMPT, batch_extractor_user_prompt
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -40,7 +41,7 @@ class BatchExtractorAgent:
 
         messages = [
             {"role": "system", "content": self.get_system_prompt()},
-            {"role": "user", "content": f"batch_data:\n{json_payload}"}
+            {"role": "user", "content": batch_extractor_user_prompt(json_payload)},
         ]
 
         try:
@@ -87,33 +88,4 @@ class BatchExtractorAgent:
         return "[]"
 
     def get_system_prompt(self) -> str:
-        return """You are an expert Data Extractor.
-Task: Convert raw wiki data into standardized setting cards.
-
-Input is a JSON list of entries. Each entry contains:
-- info: Structured infobox data
-- desc: Key paragraphs (appearance, personality, etc)
-- intro: First paragraph
-- source: Wiki page title
-
-Output Requirements:
-1. Return a JSON Array of objects.
-2. Each object must follow the schema below.
-3. Use 'info' fields directly where possible (high confidence).
-4. Synthesize 'desc' and 'intro' into a concise description for writers.
-
-Schema:
-[
-  {
-    "name": "Exact Name",
-    "type": "Character" | "World",
-    "description": "Identity, appearance, personality, role (2-5 sentences)",
-    "rationale": "Extracted from [Source Title]",
-    "confidence": 0.95
-  }
-]
-
-CRITICAL:
-- Output JSON ONLY.
-- Keep useful details in the description.
-"""
+        return BATCH_EXTRACTOR_SYSTEM_PROMPT

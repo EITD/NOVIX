@@ -39,6 +39,7 @@ export const sessionAPI = {
   start: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/start`, data),
   getStatus: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/session/status`),
   submitFeedback: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/feedback`, data),
+  suggestEdit: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/edit-suggest`, data),
   answerQuestions: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/answer-questions`, data),
   cancel: (projectId) => axios.post(`${API_BASE}/projects/${projectId}/session/cancel`),
   analyze: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/analyze`, data),
@@ -46,6 +47,11 @@ export const sessionAPI = {
   analyzeSync: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/analyze-sync`, data),
   analyzeBatch: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/analyze-batch`, data),
   saveAnalysisBatch: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/save-analysis-batch`, data),
+};
+
+// Memory Pack API
+export const memoryPackAPI = {
+  getStatus: (projectId, chapter) => axios.get(`${API_BASE}/projects/${projectId}/memory-pack/${chapter}`),
 };
 
 // Drafts API
@@ -62,6 +68,7 @@ export const draftsAPI = {
   getSummary: (projectId, chapter) => axios.get(`${API_BASE}/projects/${projectId}/drafts/${chapter}/summary`),
   saveSummary: (projectId, chapter, data) => axios.post(`${API_BASE}/projects/${projectId}/drafts/${chapter}/summary`, data),
   deleteChapter: (projectId, chapter) => axios.delete(`${API_BASE}/projects/${projectId}/drafts/${chapter}`),
+  reorderChapters: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/drafts/reorder`, data),
   updateContent: (projectId, chapter, data) => axios.put(`${API_BASE}/projects/${projectId}/drafts/${chapter}/content`, data),
 };
 
@@ -85,6 +92,25 @@ export const canonAPI = {
   update: (projectId, factId, data) => axios.put(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}`, data),
   delete: (projectId, factId) => axios.delete(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}`),
   getTree: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/facts/tree`),
+};
+
+// Evidence API
+export const evidenceAPI = {
+  search: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/evidence/search`, data),
+  rebuild: (projectId) => axios.post(`${API_BASE}/projects/${projectId}/evidence/rebuild`),
+};
+
+// Text Chunks API
+export const textChunksAPI = {
+  search: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/text-chunks/search`, data),
+  rebuild: (projectId) => axios.post(`${API_BASE}/projects/${projectId}/text-chunks/rebuild`),
+};
+
+// Bindings API
+export const bindingsAPI = {
+  get: (projectId, chapter) => axios.get(`${API_BASE}/projects/${projectId}/bindings/${chapter}`),
+  rebuild: (projectId, chapter) => axios.post(`${API_BASE}/projects/${projectId}/bindings/${chapter}/rebuild`),
+  rebuildBatch: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/bindings/rebuild-batch`, data),
 };
 
 // Config API

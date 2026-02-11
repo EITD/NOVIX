@@ -5,6 +5,10 @@ import { SidePanel } from './SidePanel';
 import { StatusBar } from './StatusBar';
 import { TitleBar } from './TitleBar';
 
+/**
+ * IDELayout - IDE 主布局
+ * 负责顶部栏、侧栏与编辑区布局，不改变业务逻辑。
+ */
 export function IDELayout({ children, rightPanelContent, titleBarProps = {} }) {
     const { state, dispatch } = useIDE();
 
@@ -25,7 +29,7 @@ export function IDELayout({ children, rightPanelContent, titleBarProps = {} }) {
     }, [dispatch]);
 
     return (
-        <div className="h-screen w-full flex flex-col bg-background overflow-hidden">
+        <div className="anti-theme h-screen w-full flex flex-col bg-[var(--vscode-bg)] text-[var(--vscode-fg)] overflow-hidden">
             {/* 顶部栏 */}
             {!state.zenMode && <TitleBar {...titleBarProps} />}
 
@@ -38,14 +42,14 @@ export function IDELayout({ children, rightPanelContent, titleBarProps = {} }) {
                 {!state.zenMode && state.sidePanelVisible && <SidePanel />}
 
                 {/* 编辑器区域 */}
-                <main className="flex-1 overflow-y-auto bg-background min-w-0">
+                <main className="flex-1 overflow-y-auto bg-[var(--vscode-bg)] min-w-0">
                     {children}
                 </main>
 
                 {/* Right Panel (AI 侧边栏) */}
                 {!state.zenMode && state.rightPanelVisible && (
                     <div
-                        className="border-l border-border flex-shrink-0 bg-surface overflow-hidden flex flex-col"
+                        className="border-l border-[var(--vscode-sidebar-border)] flex-shrink-0 bg-[var(--vscode-sidebar-bg)] overflow-hidden flex flex-col"
                         style={{ width: state.rightPanelWidth }}
                     >
                         {rightPanelContent}

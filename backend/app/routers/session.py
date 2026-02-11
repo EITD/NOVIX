@@ -54,10 +54,24 @@ class FeedbackRequest(BaseModel):
     rejected_entities: Optional[List[str]] = Field(None, description="Rejected entity names")
 
 
+class EditSuggestRequest(BaseModel):
+    """Request body for suggesting an edit on current (unsaved) content."""
+
+    chapter: Optional[str] = Field(None, description="Chapter ID (optional)")
+    content: str = Field(..., description="Current content to edit (may be unsaved)")
+    instruction: str = Field(..., description="Edit instruction")
+    rejected_entities: Optional[List[str]] = Field(None, description="Rejected entity names")
+    context_mode: Optional[str] = Field(
+        "quick",
+        description="Context mode: quick (use memory pack) | full (rebuild memory pack)",
+    )
+
+
 class QuestionAnswer(BaseModel):
     """Answer to a pre-writing question."""
     type: str = Field(..., description="Question type")
     question: Optional[str] = Field(None, description="Question text")
+    key: Optional[str] = Field(None, description="Stable question key")
     answer: str = Field(..., description="User answer")
 
 
@@ -112,6 +126,36 @@ async def submit_feedback(project_id: str, request: FeedbackRequest):
             action=request.action,
             rejected_entities=request.rejected_entities,
         )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/projects/{project_id}/session/edit-suggest")
+async def suggest_edit(project_id: str, request: EditSuggestRequest):
+    """Suggest a diff-style revision without persisting it."""
+    try:
+        orchestrator = get_orchestrator()
+        memory_pack_payload = None
+        if request.chapter:
+            mode = str(request.context_mode or "quick").strip().lower()
+            force_refresh = mode == "full"
+            memory_pack_payload = await orchestrator.ensure_memory_pack(
+                project_id=project_id,
+                chapter=request.chapter,
+                chapter_goal="",
+                scene_brief=None,
+                user_feedback=request.instruction,
+                force_refresh=force_refresh,
+                source="editor",
+            )
+        revised = await orchestrator.editor.suggest_revision(
+            project_id=project_id,
+            original_draft=request.content,
+            user_feedback=request.instruction,
+            rejected_entities=request.rejected_entities or [],
+            memory_pack=memory_pack_payload,
+        )
+        return {"success": True, "revised_content": revised, "word_count": len(revised)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
