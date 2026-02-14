@@ -17,6 +17,7 @@ from app.llm_gateway.providers import (
     OpenAIProvider,
     AnthropicProvider,
     DeepSeekProvider,
+    MockProvider,
     CustomProvider,
     QwenProvider,
     KimiProvider,
@@ -64,9 +65,7 @@ class LLMGateway:
             return str(os.getenv("WENSHAPE_LLM_PROVIDER", "") or "").strip().lower() == "mock"
 
     def _ensure_mock_provider(self) -> None:
-        """Ensure mock provider exists when running in mock mode."""
-        if not self._is_mock_mode():
-            return
+        """Ensure mock provider exists when running in mock mode or as fallback."""
         if "mock" not in self.providers:
             self.providers["mock"] = MockProvider()
     

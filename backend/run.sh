@@ -29,7 +29,7 @@ if [ ! -f ".env" ]; then
     echo "Warning: .env file not found. Creating a safe default for demo mode..."
     cat > ".env" <<'EOF'
 # Auto-generated on first run
-HOST=0.0.0.0
+HOST=127.0.0.1
 PORT=8000
 DEBUG=True
 

@@ -21,4 +21,9 @@ __all__ = [
     "DeepSeekProvider",
     "MockProvider",
     "CustomProvider",
+    "QwenProvider",
+    "KimiProvider",
+    "GLMProvider",
+    "GeminiProvider",
+    "GrokProvider",
 ]

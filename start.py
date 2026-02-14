@@ -82,7 +82,7 @@ def start_backend(backend_port: int):
             "\n".join(
                 [
                     "# Auto-generated on first run",
-                    "HOST=0.0.0.0",
+                    "HOST=127.0.0.1",
                     "DEBUG=True",
                     "",
                     "WENSHAPE_LLM_PROVIDER=mock",

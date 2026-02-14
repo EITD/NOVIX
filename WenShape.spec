@@ -1,25 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-datas = [('backend/static', 'static')]
-binaries = []
-hiddenimports = [
-    'uvicorn.logging',
-    'uvicorn.loops',
-    'uvicorn.loops.auto',
-    'uvicorn.protocols',
-    'uvicorn.protocols.http',
-    'uvicorn.protocols.http.auto',
-    'uvicorn.lifespan',
-    'uvicorn.lifespan.on',
-]
-
 
 a = Analysis(
     ['backend\\app\\main.py'],
-    pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    pathex=['backend'],
+    binaries=[],
+    datas=[('backend/static', 'static'), ('backend/config.yaml', '.')],
+    hiddenimports=['uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto', 'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan', 'uvicorn.lifespan.on'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -23,14 +23,13 @@ python -m pip install -r requirements.txt -q
 if errorlevel 1 goto :pip_failed
 
 REM Check if .env exists
-if not exist ".env" goto :create_env
-goto :start_server
+if exist ".env" goto :start_server
 
 :create_env
 echo.
 echo [!] .env file not found. Creating a safe default (.env) for demo mode...
 echo # Auto-generated on first run> ".env"
-echo HOST=0.0.0.0>> ".env"
+echo HOST=127.0.0.1>> ".env"
 echo PORT=8000>> ".env"
 echo DEBUG=True>> ".env"
 echo.>> ".env"
@@ -41,6 +40,7 @@ if errorlevel 1 goto :env_failed
 echo [!] Created: %CD%\.env
 echo [!] Running in demo mode (mock). Edit .env to enable real providers.
 echo.
+goto :start_server
 
 :start_server
 REM Start server
