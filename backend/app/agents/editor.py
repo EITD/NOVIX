@@ -471,6 +471,7 @@ class EditorAgent(BaseAgent):
             raw = str(response.get("content") or "").strip()
             data, err = parse_json_payload(raw, expected_type=dict)
             if err or not isinstance(data, dict):
+                logger.warning(f"[编辑] 首次补丁解析失败: err={err}, raw_preview={raw[:200] if raw else 'empty'}")
                 raise ValueError(f"patch_ops_parse_failed: {err}")
             ops = data.get("ops")
             if not isinstance(ops, list):
@@ -560,6 +561,9 @@ class EditorAgent(BaseAgent):
             raw2 = str(response2.get("content") or "").strip()
             data2, err2 = parse_json_payload(raw2, expected_type=dict)
             if err2 or not isinstance(data2, dict):
+                logger.error(f"[编辑] 重试补丁解析失败 (第二次): err={err2}, raw_preview={raw2[:200] if raw2 else 'empty'}")
+                logger.error(f"[编辑] 原始响应预览: {raw[:200] if raw else 'empty'}")
+                logger.error(f"[编辑] 重试响应预览: {raw2[:200] if raw2 else 'empty'}")
                 raise ValueError(f"patch_ops_retry_parse_failed: {err2}") from exc
             ops2 = data2.get("ops")
             if not isinstance(ops2, list):

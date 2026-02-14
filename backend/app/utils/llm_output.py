@@ -30,6 +30,7 @@ def parse_json_payload(
     1. Direct parsing of the full text
     2. Extraction from markdown code blocks
     3. Extraction of JSON objects/arrays from within text
+    4. Aggressive extraction for common LLM response patterns (新增)
 
     Args:
         text: LLM响应文本 / LLM response text
@@ -61,6 +62,13 @@ def parse_json_payload(
             data = _try_parse_json(segment, expected_type)
             if data is not None:
                 return data, ""
+
+    # 新增：激进模式 - 处理 LLM 在 JSON 前后添加文字的情况
+    # 例如："我生成的 JSON 如下：\n{...}\n这是最终答案"
+    for segment in _extract_json_segments(str(text)):
+        data = _try_parse_json(segment, expected_type)
+        if data is not None:
+            return data, ""
 
     return None, "json_parse_failed"
 

@@ -176,7 +176,31 @@ def _replace_env_vars(obj: Any) -> Any:
 
 # Global settings instance / 全局设置实例
 settings = Settings()
-config = load_config()
+
+# Try to load config with fallback / 尝试加载配置，带容错机制
+try:
+    config = load_config()
+except FileNotFoundError as e:
+    from app.utils.logger import get_logger
+    logger = get_logger(__name__)
+    logger.error(f"Failed to load config.yaml: {e}")
+    logger.warning("Using minimal configuration fallback, some features may not work correctly")
+
+    # Fallback: minimal config structure
+    # 回退：最小化配置结构
+    config = {
+        "llm": {
+            "default_provider": settings.wenshape_llm_provider or "mock",
+            "providers": {}
+        },
+        "session": {
+            "max_iterations": 5,
+            "timeout_seconds": 600,
+        },
+        "context_budget": {
+            "total_tokens": 128000,
+        }
+    }
 
 
 def reload_runtime_config() -> None:
@@ -198,4 +222,26 @@ def reload_runtime_config() -> None:
     global config
 
     settings = Settings()
-    config = load_config()
+
+    # Try to load config with fallback / 尝试加载配置，带容错机制
+    try:
+        config = load_config()
+    except FileNotFoundError as e:
+        from app.utils.logger import get_logger
+        logger = get_logger(__name__)
+        logger.warning(f"Failed to reload config.yaml: {e}, using fallback")
+
+        # Fallback: minimal config structure
+        config = {
+            "llm": {
+                "default_provider": settings.wenshape_llm_provider or "mock",
+                "providers": {}
+            },
+            "session": {
+                "max_iterations": 5,
+                "timeout_seconds": 600,
+            },
+            "context_budget": {
+                "total_tokens": 128000,
+            }
+        }

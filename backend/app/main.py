@@ -133,7 +133,8 @@ async def on_startup():
     # Auto-open browser in a separate thread to not block startup
     # But webbrowser.open is usually fire-and-forget
     if getattr(sys, 'frozen', False):
-        url = f"http://localhost:{settings.port}"
+        # Packaged mode: open a loopback URL (0.0.0.0 is only a bind address)
+        url = f"http://127.0.0.1:{settings.port}"
         logger.info(f"Auto-opening browser at {url}")
         # Small delay to ensure server is ready
         async def open_browser():
@@ -199,6 +200,10 @@ if __name__ == "__main__":
     # Determine execution mode
     is_frozen = getattr(sys, 'frozen', False)
 
+    # Packaged desktop app should bind to loopback by default to avoid confusing URLs (0.0.0.0)
+    # and reduce unnecessary firewall prompts.
+    bind_host = "127.0.0.1" if is_frozen else settings.host
+
     def _port_available(host: str, port: int) -> bool:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -218,7 +223,7 @@ if __name__ == "__main__":
         return base
 
     auto_port = is_frozen or (str(os.getenv("WENSHAPE_AUTO_PORT", "")).strip().lower() in {"1", "true", "yes", "on"})
-    host_for_check = "127.0.0.1" if settings.host in {"0.0.0.0", "::"} else settings.host
+    host_for_check = bind_host
     chosen_port = settings.port
     if auto_port and not _port_available(host_for_check, chosen_port):
         new_port = _pick_port(host_for_check, chosen_port + 1)
@@ -231,13 +236,59 @@ if __name__ == "__main__":
         # Prod/EXE: Run directly with app instance, NO RELOAD
         # Reloading in frozen mode causes infinite subprocess spawning
         logger.info("Running in Frozen (EXE) Mode")
-        uvicorn.run(
-            app,  # Pass app instance directly, not string
-            host=settings.host, 
-            port=chosen_port, 
-            reload=False,
-            log_level="info"
-        )
+
+        def _is_address_in_use(error: OSError) -> bool:
+            # Windows: WinError 10048; Linux/macOS: errno 98/48
+            winerror = getattr(error, "winerror", None)
+            if winerror == 10048:
+                return True
+            if getattr(error, "errno", None) in {48, 98}:
+                return True
+            text = str(error).lower()
+            return "address already in use" in text or "only one usage" in text
+
+        attempt_port = chosen_port
+        while True:
+            try:
+                settings.port = attempt_port
+                uvicorn.run(
+                    app,  # Pass app instance directly, not string
+                    host=bind_host,
+                    port=attempt_port,
+                    reload=False,
+                    log_level="info",
+                )
+                break
+            except OSError as exc:
+                if auto_port and _is_address_in_use(exc):
+                    next_port = _pick_port(host_for_check, attempt_port + 1)
+                    if next_port != attempt_port:
+                        logger.warning(
+                            "Port %s is in use. Switching to available port %s.",
+                            attempt_port,
+                            next_port,
+                        )
+                        attempt_port = next_port
+                        continue
+
+                # When launched by double-click, the console may close immediately.
+                # Provide a clear error message instead of "flash exit".
+                logger.error("Failed to start server on %s:%s: %s", bind_host, attempt_port, exc, exc_info=True)
+                print("")
+                print("========================================")
+                print(" WenShape 启动失败 / Startup Failed")
+                print("----------------------------------------")
+                print(f"原因 / Reason: {exc}")
+                print("建议 / Suggestion:")
+                print("  1) 关闭占用端口的程序（常见：8000）。")
+                print("  2) 重新运行后会自动尝试切换端口。")
+                print("========================================")
+                print("")
+                try:
+                    input("按回车键退出...")
+                except Exception:
+                    pass
+                raise
     else:
         # Dev: Run with reload
         logger.info("Running in Dev Mode")
