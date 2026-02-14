@@ -1,6 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Facts Tree Router
-Provides a volume/chapter/fact tree for the Facts Encyclopedia.
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  事实树路由 - 提供分卷/章节/事实的树形结构 API 端点，用于事实百科浏览和查询。
+  Facts tree router - Provides volume/chapter/fact hierarchical API endpoints for Facts Encyclopedia browsing and query.
 """
 
 from collections import defaultdict
@@ -9,9 +17,7 @@ import re
 
 from fastapi import APIRouter
 
-from app.storage.canon import CanonStorage
-from app.storage.drafts import DraftStorage
-from app.storage.volumes import VolumeStorage
+from app.dependencies import get_canon_storage, get_draft_storage, get_volume_storage
 from app.utils.chapter_id import ChapterIDValidator
 
 
@@ -34,9 +40,9 @@ class SummaryView:
 
 
 router = APIRouter(prefix="/projects/{project_id}/facts", tags=["facts"])
-canon_storage = CanonStorage()
-draft_storage = DraftStorage()
-volume_storage = VolumeStorage()
+canon_storage = get_canon_storage()
+draft_storage = get_draft_storage()
+volume_storage = get_volume_storage()
 
 
 def _volume_sort_key(volume_id: str) -> int:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NOVIX 一键启动脚本
+WenShape 一键启动脚本
 Starts both backend and frontend services
 """
 
@@ -9,6 +9,28 @@ import sys
 import time
 import os
 import platform
+import socket
+from typing import Tuple
+
+def _pick_free_port(host: str, preferred: int, max_tries: int = 30) -> int:
+    preferred = int(preferred or 0)
+    for port in range(max(preferred, 1), max(preferred, 1) + max_tries):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((host, port))
+                return port
+        except OSError:
+            continue
+    return preferred or 0
+
+def pick_ports() -> Tuple[int, int]:
+    host = "127.0.0.1"
+    backend_preferred = int(os.environ.get("WENSHAPE_BACKEND_PORT") or os.environ.get("PORT") or 8000)
+    frontend_preferred = int(os.environ.get("WENSHAPE_FRONTEND_PORT") or os.environ.get("VITE_DEV_PORT") or 3000)
+    backend_port = _pick_free_port(host, backend_preferred) or backend_preferred
+    frontend_port = _pick_free_port(host, frontend_preferred) or frontend_preferred
+    return backend_port, frontend_port
 
 def check_python():
     """Check if Python 3.10+ is available"""
@@ -36,16 +58,21 @@ def check_node():
         print("[ERROR] Node.js is not installed or not in PATH")
         return False
 
-def start_backend():
+def start_backend(backend_port: int):
     """Start backend service"""
     print("\n[1/2] Starting backend service...")
     backend_dir = os.path.join(os.path.dirname(__file__), 'backend')
+    env = dict(os.environ)
+    env["PORT"] = str(backend_port)
+    env["WENSHAPE_BACKEND_PORT"] = str(backend_port)
+    env["WENSHAPE_AUTO_PORT"] = "1"
 
     if platform.system() == 'Windows':
         # Windows: start in new window
         subprocess.Popen(
             ['cmd', '/k', 'run.bat'],
             cwd=backend_dir,
+            env=env,
             creationflags=subprocess.CREATE_NEW_CONSOLE
         )
     else:
@@ -53,23 +80,32 @@ def start_backend():
         subprocess.Popen(
             ['bash', 'run.sh'],
             cwd=backend_dir,
+            env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
 
-    print("  Backend: http://localhost:8000")
+    print(f"  Backend: http://localhost:{backend_port}")
     time.sleep(3)  # Give backend time to start
+    return backend_port
 
-def start_frontend():
+def start_frontend(backend_port: int, frontend_port: int):
     """Start frontend service"""
     print("[2/2] Starting frontend service...")
     frontend_dir = os.path.join(os.path.dirname(__file__), 'frontend')
+    env = dict(os.environ)
+    env["VITE_DEV_PORT"] = str(frontend_port)
+    env["WENSHAPE_FRONTEND_PORT"] = str(frontend_port)
+    env["VITE_BACKEND_PORT"] = str(backend_port)
+    env["WENSHAPE_BACKEND_PORT"] = str(backend_port)
+    env["VITE_BACKEND_URL"] = env.get("VITE_BACKEND_URL") or f"http://localhost:{backend_port}"
 
     if platform.system() == 'Windows':
         # Windows: start in new window
         subprocess.Popen(
             ['cmd', '/k', 'run.bat'],
             cwd=frontend_dir,
+            env=env,
             creationflags=subprocess.CREATE_NEW_CONSOLE
         )
     else:
@@ -77,15 +113,17 @@ def start_frontend():
         subprocess.Popen(
             ['bash', 'run.sh'],
             cwd=frontend_dir,
+            env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
 
-    print("  Frontend: http://localhost:3000")
+    print(f"  Frontend: http://localhost:{frontend_port}")
+    return frontend_port
 
 def main():
     print("=" * 50)
-    print("  NOVIX - Context-Aware Novel Writing System")
+    print("  WenShape - Context-Aware Novel Writing System")
     print("=" * 50)
     print()
 
@@ -100,8 +138,9 @@ def main():
 
     # Start services
     try:
-        start_backend()
-        start_frontend()
+        backend_port, frontend_port = pick_ports()
+        backend_port = start_backend(backend_port)
+        frontend_port = start_frontend(backend_port, frontend_port)
 
         print()
         print("=" * 50)
@@ -109,9 +148,9 @@ def main():
         print("=" * 50)
         print()
         print("Access URLs:")
-        print("  Frontend:   http://localhost:3000")
-        print("  Backend:    http://localhost:8000")
-        print("  API Docs:   http://localhost:8000/docs")
+        print(f"  Frontend:   http://localhost:{frontend_port}")
+        print(f"  Backend:    http://localhost:{backend_port}")
+        print(f"  API Docs:   http://localhost:{backend_port}/docs")
         print()
         print("Tip: Close the service windows to stop the services.")
         print()

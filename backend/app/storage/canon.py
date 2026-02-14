@@ -6,6 +6,7 @@ Manage facts, timeline events, and character states.
 from typing import List, Optional, Dict, Any
 import re
 from app.storage.base import BaseStorage
+from app.storage.indexed_cache import get_index_cache
 from app.utils.chapter_id import parse_chapter_number, ChapterIDValidator
 from app.schemas.canon import Fact, TimelineEvent, CharacterState
 
@@ -104,8 +105,17 @@ class CanonStorage(BaseStorage):
         return [self._normalize_fact_item(item, idx) for idx, item in enumerate(items)]
 
     async def get_fact(self, project_id: str, fact_id: str) -> Optional[Fact]:
-        """Get a fact by ID."""
+        """Get a fact by ID (O(1) with index cache)."""
+        # 尝试从索引缓存获取
+        cache = get_index_cache()
+        cached = cache.get_fact_by_id(project_id, fact_id)
+        if cached:
+            return Fact(**self._normalize_fact_item(cached, 0))
+
+        # 回退到全表扫描（同时构建索引）
         facts = await self.get_all_facts(project_id)
+        # 构建索引供下次使用
+        await cache.get_or_build_index(project_id, self)
         for fact in facts:
             if fact.id == fact_id:
                 return fact
@@ -122,7 +132,9 @@ class CanonStorage(BaseStorage):
         """
         file_path = self.get_project_path(project_id) / "canon" / "facts.jsonl"
         await self.append_jsonl(file_path, fact.model_dump())
-    
+        # 使索引失效
+        await get_index_cache().invalidate(project_id)
+
 
     async def update_fact(self, project_id: str, fact_data: Dict[str, Any]) -> bool:
         """Update an existing fact by ID."""
@@ -137,6 +149,8 @@ class CanonStorage(BaseStorage):
         if not updated:
             return False
         await self.write_jsonl(file_path, items)
+        # 使索引失效
+        await get_index_cache().invalidate(project_id)
         return True
 
     async def delete_fact(self, project_id: str, fact_id: str) -> bool:
@@ -147,6 +161,8 @@ class CanonStorage(BaseStorage):
         if len(kept) == len(items):
             return False
         await self.write_jsonl(file_path, kept)
+        # 使索引失效
+        await get_index_cache().invalidate(project_id)
         return True
 
 
@@ -169,6 +185,8 @@ class CanonStorage(BaseStorage):
             kept.append(item)
         if deleted > 0:
             await self.write_jsonl(file_path, kept)
+            # 使索引失效
+            await get_index_cache().invalidate(project_id)
         return deleted
 
     async def normalize_fact_records(self, project_id: str) -> int:

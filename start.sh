@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "========================================"
-echo "   NOVIX 一键启动"
+echo "   WenShape 一键启动"
 echo "========================================"
 echo ""
 
@@ -24,17 +24,42 @@ fi
 # 获取脚本所在目录
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+PORTS="$(python3 - <<'PY'
+import os, socket
+
+def pick(start: int) -> int:
+    start = int(start or 0)
+    for p in range(max(start, 1), max(start, 1) + 30):
+        try:
+            s = socket.socket()
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("127.0.0.1", p))
+            s.close()
+            return p
+        except OSError:
+            pass
+    return start or 0
+
+bp = os.environ.get("WENSHAPE_BACKEND_PORT") or os.environ.get("PORT") or "8000"
+fp = os.environ.get("WENSHAPE_FRONTEND_PORT") or os.environ.get("VITE_DEV_PORT") or "3000"
+print(f"{pick(int(bp))},{pick(int(fp))}")
+PY
+)"
+WENSHAPE_BACKEND_PORT="${PORTS%,*}"
+WENSHAPE_FRONTEND_PORT="${PORTS#*,}"
+export WENSHAPE_BACKEND_PORT WENSHAPE_FRONTEND_PORT
+
 echo "[1/3] 启动后端服务..."
-osascript -e "tell app \"Terminal\" to do script \"cd '$SCRIPT_DIR/backend' && ./run.sh\"" 2>/dev/null || \
-gnome-terminal -- bash -c "cd '$SCRIPT_DIR/backend' && ./run.sh; exec bash" 2>/dev/null || \
-xterm -e "cd '$SCRIPT_DIR/backend' && ./run.sh" 2>/dev/null &
+osascript -e "tell app \"Terminal\" to do script \"cd '$SCRIPT_DIR/backend' && PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_AUTO_PORT=1 ./run.sh\"" 2>/dev/null || \
+gnome-terminal -- bash -c "cd '$SCRIPT_DIR/backend' && PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_AUTO_PORT=1 ./run.sh; exec bash" 2>/dev/null || \
+xterm -e "cd '$SCRIPT_DIR/backend' && PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_AUTO_PORT=1 ./run.sh" 2>/dev/null &
 
 sleep 3
 
 echo "[2/3] 启动前端服务..."
-osascript -e "tell app \"Terminal\" to do script \"cd '$SCRIPT_DIR/frontend' && ./run.sh\"" 2>/dev/null || \
-gnome-terminal -- bash -c "cd '$SCRIPT_DIR/frontend' && ./run.sh; exec bash" 2>/dev/null || \
-xterm -e "cd '$SCRIPT_DIR/frontend' && ./run.sh" 2>/dev/null &
+osascript -e "tell app \"Terminal\" to do script \"cd '$SCRIPT_DIR/frontend' && VITE_DEV_PORT='$WENSHAPE_FRONTEND_PORT' WENSHAPE_FRONTEND_PORT='$WENSHAPE_FRONTEND_PORT' VITE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' VITE_BACKEND_URL='http://localhost:$WENSHAPE_BACKEND_PORT' ./run.sh\"" 2>/dev/null || \
+gnome-terminal -- bash -c "cd '$SCRIPT_DIR/frontend' && VITE_DEV_PORT='$WENSHAPE_FRONTEND_PORT' WENSHAPE_FRONTEND_PORT='$WENSHAPE_FRONTEND_PORT' VITE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' VITE_BACKEND_URL='http://localhost:$WENSHAPE_BACKEND_PORT' ./run.sh; exec bash" 2>/dev/null || \
+xterm -e "cd '$SCRIPT_DIR/frontend' && VITE_DEV_PORT='$WENSHAPE_FRONTEND_PORT' WENSHAPE_FRONTEND_PORT='$WENSHAPE_FRONTEND_PORT' VITE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' VITE_BACKEND_URL='http://localhost:$WENSHAPE_BACKEND_PORT' ./run.sh" 2>/dev/null &
 
 echo ""
 echo "[3/3] 服务启动完成！"
@@ -42,9 +67,9 @@ echo ""
 echo "========================================"
 echo " 访问地址:"
 echo "----------------------------------------"
-echo " 前端界面:   http://localhost:3000"
-echo " 后端 API:   http://localhost:8000"
-echo " API 文档:   http://localhost:8000/docs"
+echo " 前端界面:   http://localhost:$WENSHAPE_FRONTEND_PORT"
+echo " 后端 API:   http://localhost:$WENSHAPE_BACKEND_PORT"
+echo " API 文档:   http://localhost:$WENSHAPE_BACKEND_PORT/docs"
 echo "========================================"
 echo ""
 echo "提示: 前后端服务已在独立终端启动"

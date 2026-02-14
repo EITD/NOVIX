@@ -1,10 +1,11 @@
 """
-NOVIX FastAPI Application Entry Point
+WenShape FastAPI Application Entry Point
 FastAPI 应用入口
 """
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -18,7 +19,11 @@ from app.routers import (
     drafts_router,
     session_router,
     config_router,
-    proxy_router
+    proxy_router,
+    text_chunks_router,
+    evidence_router,
+    bindings_router,
+    memory_pack_router,
 )
 from app.routers.fanfiction import router as fanfiction_router
 from app.routers.websocket import router as websocket_router
@@ -31,7 +36,7 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
 # Create FastAPI application / 创建 FastAPI 应用
 app = FastAPI(
-    title="NOVIX API",
+    title="WenShape API",
     description="Multi-Agent Novel Writing System / 多智能体小说写作系统",
     version="0.1.0",
     debug=settings.debug
@@ -40,6 +45,23 @@ app = FastAPI(
 # Add rate limiter to app state
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# Global exception handler — prevents leaking internal details to clients
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch all unhandled exceptions and return a safe 500 response."""
+    logger.error(
+        "Unhandled exception on %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 # Configure CORS / 配置跨域
 # Production-ready CORS configuration
@@ -59,7 +81,6 @@ app.add_middleware(
 )
 
 # Register routers / 注册路由
-# Register routers / 注册路由
 # Strategy: Dual Mount
 # Mount at root "/" for Dev mode (where Vite proxy strips /api)
 # Mount at "/api" for Prod/EXE mode (where frontend calls /api directly)
@@ -74,12 +95,16 @@ routers = [
     websocket_router,
     fanfiction_router,
     proxy_router,
-    volumes_router
+    volumes_router,
+    text_chunks_router,
+    evidence_router,
+    bindings_router,
+    memory_pack_router,
 ]
 
 for router in routers:
-    app.include_router(router)              # Dev: http://localhost:8000/projects
-    app.include_router(router, prefix="/api") # Prod: http://localhost:8000/api/projects
+    app.include_router(router)                  # Dev: http://localhost:8000/projects
+    app.include_router(router, prefix="/api")   # Prod: http://localhost:8000/api/projects
 
 
 
@@ -88,7 +113,15 @@ for router in routers:
 @app.get("/health")
 async def health_check():
     """Health check endpoint / 健康检查"""
-    return {"status": "ok"}
+    from pathlib import Path
+    data_dir = Path(settings.data_dir) if hasattr(settings, "data_dir") else Path("data")
+    storage_ok = data_dir.exists() if data_dir else False
+
+    return {
+        "status": "ok",
+        "version": app.version,
+        "storage_accessible": storage_ok,
+    }
 
 @app.on_event("startup")
 async def on_startup():
@@ -157,12 +190,42 @@ else:
 if __name__ == "__main__":
     import uvicorn
     import multiprocessing
+    import os
+    import socket
     
     # Critical for Windows EXE to prevent infinite spawn loop
     multiprocessing.freeze_support()
     
     # Determine execution mode
     is_frozen = getattr(sys, 'frozen', False)
+
+    def _port_available(host: str, port: int) -> bool:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((host, int(port)))
+                return True
+        except OSError:
+            return False
+
+    def _pick_port(host: str, preferred: int, max_tries: int = 20) -> int:
+        base = int(preferred or 0)
+        if base <= 0:
+            return 8000
+        for port in range(base, base + max_tries):
+            if _port_available(host, port):
+                return port
+        return base
+
+    auto_port = is_frozen or (str(os.getenv("WENSHAPE_AUTO_PORT", "")).strip().lower() in {"1", "true", "yes", "on"})
+    host_for_check = "127.0.0.1" if settings.host in {"0.0.0.0", "::"} else settings.host
+    chosen_port = settings.port
+    if auto_port and not _port_available(host_for_check, chosen_port):
+        new_port = _pick_port(host_for_check, chosen_port + 1)
+        if new_port != chosen_port:
+            logger.warning(f"Port {chosen_port} is in use. Switching to available port {new_port}.")
+            chosen_port = new_port
+            settings.port = chosen_port
     
     if is_frozen:
         # Prod/EXE: Run directly with app instance, NO RELOAD
@@ -171,7 +234,7 @@ if __name__ == "__main__":
         uvicorn.run(
             app,  # Pass app instance directly, not string
             host=settings.host, 
-            port=settings.port, 
+            port=chosen_port, 
             reload=False,
             log_level="info"
         )
@@ -181,6 +244,6 @@ if __name__ == "__main__":
         uvicorn.run(
             "app.main:app",
             host=settings.host,
-            port=settings.port,
+            port=chosen_port,
             reload=settings.debug
         )

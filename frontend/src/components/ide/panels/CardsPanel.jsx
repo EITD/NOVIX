@@ -1,10 +1,52 @@
-﻿import React, { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   卡片面板 - 管理角色卡、世界观卡、风格卡，支持创建、编辑、删除和星级管理
+ *   Cards panel for managing character, worldview, and style cards with CRUD operations.
+ */
+
+/**
+ * 设定卡片管理面板 - 角色、世界观和风格卡片的集中管理界面
+ *
+ * IDE panel for managing story setting cards (characters, worldview, style).
+ * Provides CRUD operations, filtering, and integration with wiki import and card editing dialogs.
+ * Maintains visual consistency without altering core business logic.
+ *
+ * @component
+ * @example
+ * return (
+ *   <CardsPanel />
+ * )
+ *
+ * @returns {JSX.Element} 卡片面板 / Cards panel element
+ */
+import { useEffect, useMemo, useState } from 'react';
 import { useIDE } from '../../../context/IDEContext';
 import { useParams } from 'react-router-dom';
 import { cardsAPI } from '../../../api';
 import { Plus, RefreshCw, User, Globe, Trash2, FileText, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '../../ui/core';
+import logger from '../../../utils/logger';
+
+const normalizeStars = (value) => {
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed)) return 1;
+  return Math.max(1, Math.min(parsed, 3));
+};
+
+const compareByStarsThenName = (a, b) => {
+  const starDiff = normalizeStars(b?.stars) - normalizeStars(a?.stars);
+  if (starDiff !== 0) return starDiff;
+  return String(a?.name || '').localeCompare(String(b?.name || ''), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+};
 
 export default function CardsPanel() {
   const { projectId } = useParams();
@@ -20,15 +62,15 @@ export default function CardsPanel() {
 
   useEffect(() => {
     loadEntities();
-  }, [projectId]);
+  }, [projectId, state.lastSavedAt]);
 
   const loadEntities = async () => {
     setLoading(true);
     try {
       const [charsResp, worldsResp, styleResp] = await Promise.allSettled([
-        cardsAPI.listCharacters(projectId),
-        cardsAPI.listWorld(projectId),
-        cardsAPI.getStyle(projectId)
+        cardsAPI.listCharactersIndex(projectId),
+        cardsAPI.listWorldIndex(projectId),
+        cardsAPI.getStyle(projectId),
       ]);
 
       const chars = charsResp.status === 'fulfilled' ? (Array.isArray(charsResp.value.data) ? charsResp.value.data : []) : [];
@@ -36,14 +78,28 @@ export default function CardsPanel() {
       const style = styleResp.status === 'fulfilled' ? styleResp.value.data : null;
 
       const combined = [
-        ...chars.map(name => ({ name, type: 'character' })),
-        ...worlds.map(name => ({ name, type: 'world' }))
+        ...chars
+          .filter((card) => card?.name)
+          .map((card) => ({
+            id: `character:${card.name}`,
+            name: card.name,
+            type: 'character',
+            stars: normalizeStars(card.stars),
+          })),
+        ...worlds
+          .filter((card) => card?.name)
+          .map((card) => ({
+            id: `world:${card.name}`,
+            name: card.name,
+            type: 'world',
+            stars: normalizeStars(card.stars),
+          })),
       ];
 
       setEntities(combined);
       setStyleCard(style || { style: '' });
     } catch (e) {
-      console.error('Failed to load cards', e);
+      logger.error('Failed to load cards', e);
     } finally {
       setLoading(false);
     }
@@ -75,7 +131,7 @@ export default function CardsPanel() {
         dispatch({ type: 'CLEAR_ACTIVE_DOCUMENT' });
       }
     } catch (error) {
-      console.error('Failed to delete card:', error);
+      logger.error('Failed to delete card:', error);
       alert('删除失败：' + (error.response?.data?.detail || error.message));
     }
   };
@@ -84,7 +140,7 @@ export default function CardsPanel() {
     try {
       await cardsAPI.updateStyle(projectId, { style: styleCard.style || '' });
     } catch (error) {
-      console.error('Failed to save style card:', error);
+      logger.error('Failed to save style card:', error);
     }
   };
 
@@ -106,18 +162,23 @@ export default function CardsPanel() {
     }
   };
 
-  const filteredEntities = entities.filter(e => e.type === typeFilter);
+  const filteredEntities = useMemo(() => {
+    return entities
+      .filter((entity) => entity.type === typeFilter)
+      .slice()
+      .sort(compareByStarsThenName);
+  }, [entities, typeFilter]);
 
   const getCardIcon = (type) => {
     switch (type) {
       case 'character':
-        return <User size={14} className="text-indigo-500" />;
+        return <User size={14} className="text-[var(--vscode-fg-subtle)]" />;
       case 'world':
-        return <Globe size={14} className="text-emerald-500" />;
+        return <Globe size={14} className="text-[var(--vscode-fg-subtle)]" />;
       case 'style':
-        return <FileText size={14} className="text-amber-500" />;
+        return <FileText size={14} className="text-[var(--vscode-fg-subtle)]" />;
       default:
-        return <FileText size={14} className="text-ink-400" />;
+        return <FileText size={14} className="text-[var(--vscode-fg-subtle)]" />;
     }
   };
 
@@ -127,21 +188,19 @@ export default function CardsPanel() {
     { id: 'style', label: '文风', icon: FileText }
   ];
 
-  const currentIndex = typeOptions.findIndex(opt => opt.id === typeFilter);
-
   return (
-    <div className="h-full flex flex-col">
-      <div className="p-2 border-b border-border/50">
+    <div className="anti-theme h-full flex flex-col bg-[var(--vscode-bg)] text-[var(--vscode-fg)]">
+      <div className="p-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-bold uppercase tracking-wider pl-2 text-ink-500">卡片库</span>
+          <span className="text-xs font-bold uppercase tracking-wider pl-2 text-[var(--vscode-fg-subtle)]">卡片库</span>
           <div className="flex gap-1">
-            <button onClick={loadEntities} className="p-1 hover:bg-black/5 rounded" title="刷新">
+            <button onClick={loadEntities} className="p-1 hover:bg-[var(--vscode-list-hover)] rounded-[4px]" title="刷新">
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
             </button>
             {typeFilter !== 'style' && (
               <button
                 onClick={handleCreateCard}
-                className="p-1 hover:bg-black/5 rounded"
+                className="p-1 hover:bg-[var(--vscode-list-hover)] rounded-[4px]"
                 title="新建卡片"
               >
                 <Plus size={12} />
@@ -151,18 +210,8 @@ export default function CardsPanel() {
         </div>
 
         <div className="px-1 py-1">
-          <div className="relative bg-ink-50 rounded-full p-0.5 border border-border/30">
-            <motion.div
-              className="absolute top-0.5 bottom-0.5 bg-primary rounded-full shadow-sm"
-              initial={false}
-              animate={{
-                left: `calc(${currentIndex * 33.333}% + 2px)`,
-                width: 'calc(33.333% - 4px)'
-              }}
-              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-            />
-
-            <div className="relative flex">
+          <div className="bg-[var(--vscode-bg)] rounded-[6px] p-0.5 border border-[var(--vscode-sidebar-border)]">
+            <div className="flex">
               {typeOptions.map((opt) => {
                 const Icon = opt.icon;
                 const isActive = typeFilter === opt.id;
@@ -171,8 +220,10 @@ export default function CardsPanel() {
                     key={opt.id}
                     onClick={() => setTypeFilter(opt.id)}
                     className={cn(
-                      'flex-1 relative z-10 py-1 px-2 text-[10px] font-medium rounded-full transition-colors duration-200',
-                      isActive ? 'text-white' : 'text-ink-500 hover:text-ink-700'
+                      'flex-1 py-1 px-2 text-[10px] font-medium rounded-[4px] transition-none',
+                      isActive
+                        ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]'
+                        : 'text-[var(--vscode-fg-subtle)] hover:bg-[var(--vscode-list-hover)] hover:text-[var(--vscode-fg)]'
                     )}
                   >
                     <div className="flex items-center justify-center gap-1">
@@ -192,17 +243,17 @@ export default function CardsPanel() {
           <div className="space-y-2">
             <div
               onClick={() => setStyleExpanded(!styleExpanded)}
-              className="flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-ink-50 transition-colors"
+              className="flex items-center gap-2 p-2 rounded-[6px] cursor-pointer hover:bg-[var(--vscode-list-hover)] transition-none"
             >
               {styleExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              <FileText size={14} className="text-amber-500" />
+              <FileText size={14} className="text-[var(--vscode-fg-subtle)]" />
               <span className="text-sm font-medium flex-1">文风设定</span>
             </div>
 
             {styleExpanded && (
               <div className="pl-6 pr-2 space-y-3 pb-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-ink-500 uppercase">文风</label>
+                  <label className="text-[10px] font-bold text-[var(--vscode-fg-subtle)] uppercase">文风</label>
                   <textarea
                     value={styleCard.style || ''}
                     onChange={e => {
@@ -215,17 +266,17 @@ export default function CardsPanel() {
                       e.target.style.height = 'auto';
                       e.target.style.height = e.target.scrollHeight + 'px';
                     }}
-                    className="w-full text-xs p-2 border border-border rounded bg-surface/50 focus:border-primary focus:ring-1 focus:ring-primary/20 min-h-[120px] resize-none overflow-hidden"
+                    className="w-full text-xs p-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:border-[var(--vscode-focus-border)] focus:ring-1 focus:ring-[var(--vscode-focus-border)] min-h-[120px] resize-none overflow-hidden"
                     placeholder="写作风格要求..."
                   />
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-bold text-ink-500 uppercase">AI 文风提炼</label>
+                    <label className="text-[10px] font-bold text-[var(--vscode-fg-subtle)] uppercase">文风提炼</label>
                     <button
                       type="button"
                       onClick={handleExtractStyle}
-                      className="text-[10px] px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-60"
+                      className="text-[10px] px-2 py-1 rounded-[4px] border border-[var(--vscode-input-border)] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] disabled:opacity-60"
                       disabled={styleExtracting}
                     >
                       {styleExtracting ? '提炼中...' : '提炼并覆盖'}
@@ -234,7 +285,7 @@ export default function CardsPanel() {
                   <textarea
                     value={styleSample}
                     onChange={e => setStyleSample(e.target.value)}
-                    className="w-full text-xs p-2 border border-border rounded bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 min-h-[90px] resize-none overflow-hidden"
+                    className="w-full text-xs p-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:border-[var(--vscode-focus-border)] focus:ring-1 focus:ring-[var(--vscode-focus-border)] min-h-[90px] resize-none overflow-hidden"
                     placeholder="粘贴喜欢的文本片段"
                   />
                 </div>
@@ -246,48 +297,45 @@ export default function CardsPanel() {
         {typeFilter !== 'style' && (
           <>
             {filteredEntities.length === 0 && !loading && (
-              <div className="text-center text-xs text-ink-400 py-8">
+              <div className="text-center text-xs text-[var(--vscode-fg-subtle)] py-8">
                 <p>暂无{typeOptions.find(opt => opt.id === typeFilter)?.label}卡片</p>
                 <p className="text-[10px] mt-2 opacity-60">点击右上角 + 创建卡片</p>
               </div>
             )}
 
             <div className="space-y-1">
-              <AnimatePresence>
-                {filteredEntities.map((entity, idx) => (
-                  <motion.div
-                    key={entity.id || entity.name || idx}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.2, delay: idx * 0.05 }}
-                    onClick={() => dispatch({
-                      type: 'SET_ACTIVE_DOCUMENT',
-                      payload: { type: entity.type || 'card', id: entity.name, data: entity }
-                    })}
-                    className={cn(
-                      'flex items-start gap-2 px-2 py-2 rounded cursor-pointer hover:bg-ink-50 group border border-transparent hover:border-border/50 transition-all',
-                      state.activeDocument?.id === entity.name && state.activeDocument?.type === (entity.type || 'card')
-                        ? 'bg-primary/10 border-primary/20'
-                        : ''
-                    )}
+              {filteredEntities.map((entity, idx) => (
+                <div
+                  key={entity.id || entity.name || idx}
+                  onClick={() => dispatch({
+                    type: 'SET_ACTIVE_DOCUMENT',
+                    payload: { type: entity.type || 'card', id: entity.name, data: entity }
+                  })}
+                  className={cn(
+                    'flex items-start gap-2 px-2 py-2 rounded-[6px] cursor-pointer hover:bg-[var(--vscode-list-hover)] group border border-transparent transition-none',
+                    state.activeDocument?.id === entity.name && state.activeDocument?.type === (entity.type || 'card')
+                      ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]'
+                      : ''
+                  )}
+                >
+                  <div className="mt-0.5 opacity-60">
+                    {getCardIcon(entity.type)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-medium leading-none mb-1">{entity.name}</div>
+                      <div className="text-[10px] opacity-70">{`${normalizeStars(entity.stars)}星`}</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => handleDeleteCard(entity, e)}
+                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded-[4px] text-[var(--vscode-fg-subtle)] hover:text-red-500 transition-none"
+                    title="删除卡片"
                   >
-                    <div className="mt-0.5 opacity-60">
-                      {getCardIcon(entity.type)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-ink-700 leading-none mb-1">{entity.name}</div>
-                    </div>
-                    <button
-                      onClick={(e) => handleDeleteCard(entity, e)}
-                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded text-ink-400 hover:text-red-500 transition-all"
-                      title="删除卡片"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
             </div>
           </>
         )}

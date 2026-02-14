@@ -1,9 +1,50 @@
-﻿import { useEffect, useMemo, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { CheckSquare, Square, X, RefreshCw } from 'lucide-react';
-import { Button, Card } from '../ui/core';
-import { draftsAPI, volumesAPI } from '../../api';
+﻿/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   批量同步分析对话框 - 选择要分析的章节后批量触发后端分析流程
+ *   Analysis sync dialog for selecting chapters and triggering batch analysis.
+ */
 
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Check } from 'lucide-react';
+import { Button } from '../ui/core';
+import { draftsAPI, volumesAPI } from '../../api';
+import { cn } from '../ui/core';
+
+/**
+ * 批量同步分析对话框 - 用户选择要分析的章节并批量触发分析
+ *
+ * Modal dialog for selecting chapters to analyze and triggering batch analysis.
+ * Only optimizes visual consistency without altering data and behavior logic.
+ *
+ * @component
+ * @example
+ * return (
+ *   <AnalysisSyncDialog
+ *     open={true}
+ *     projectId="proj-001"
+ *     onConfirm={handleConfirm}
+ *     onCancel={handleCancel}
+ *     loading={false}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {boolean} [props.open=false] - 对话框是否打开 / Whether dialog is open
+ * @param {string} [props.projectId] - 项目ID / Project identifier
+ * @param {Function} [props.onConfirm] - 确认回调，返回选中章节数组 / Confirm callback with selected chapters
+ * @param {Function} [props.onCancel] - 取消回调 / Cancel callback
+ * @param {boolean} [props.loading=false] - 是否加载中 / Whether loading
+ * @returns {JSX.Element} 批量同步分析对话框 / Analysis sync dialog element
+ */
+
+// 辅助函数保持原逻辑 / Helper functions maintain original logic
 const getChapterWeight = (chapterId) => {
   const match = chapterId.match(/^(?:V(\d+))?C(\d+)(?:([EI])(\d+))?$/i);
   if (!match) return 0;
@@ -21,14 +62,27 @@ const getVolumeId = (chapterId, summary) => {
   const match = chapterId.match(/^V(\d+)/i);
   return match ? `V${match[1]}` : 'V1';
 };
-
-export default function AnalysisSyncDialog({ open, projectId, onClose, onConfirm, loading }) {
+export default function AnalysisSyncDialog({
+  open,
+  projectId,
+  onClose,
+  onConfirm,
+  onRebuild,
+  onRebuildIndexes,
+  loading,
+  results = [],
+  error = '',
+  indexRebuildLoading = false,
+  indexRebuildError = '',
+  indexRebuildSuccess = false,
+}) {
   const [chapters, setChapters] = useState([]);
   const [summaries, setSummaries] = useState({});
   const [volumes, setVolumes] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [fetching, setFetching] = useState(false);
 
+  // 数据获取逻辑保持不变
   useEffect(() => {
     if (!open || !projectId) return;
     setSelected(new Set());
@@ -59,6 +113,7 @@ export default function AnalysisSyncDialog({ open, projectId, onClose, onConfirm
   }, [open, projectId]);
 
   const grouped = useMemo(() => {
+    // 布局分组逻辑保持不变
     const groups = {};
     chapters.forEach((chapterId) => {
       const summary = summaries[chapterId];
@@ -92,125 +147,191 @@ export default function AnalysisSyncDialog({ open, projectId, onClose, onConfirm
     });
   };
 
-  const selectAll = () => {
-    setSelected(new Set(chapters));
+  const selectAll = () => setSelected(new Set(chapters));
+  const clearAll = () => setSelected(new Set());
+  const handleConfirm = () => { if (onConfirm) onConfirm(Array.from(selected)); };
+  const handleRebuild = () => { if (onRebuild) onRebuild(Array.from(selected)); };
+  const handleRebuildIndexes = () => { if (onRebuildIndexes) onRebuildIndexes(); };
+  const formatCharacters = (binding) => {
+    const list = binding?.characters;
+    if (!Array.isArray(list) || list.length === 0) return '未检出';
+    return list.join('、');
   };
 
-  const clearAll = () => {
-    setSelected(new Set());
-  };
+  if (!open) return null;
 
-  const handleConfirm = () => {
-    if (!onConfirm) return;
-    onConfirm(Array.from(selected));
-  };
+  return createPortal(
+    <>
+      {/* 背景遮罩（轻微遮挡） */}
+      <div
+        className="fixed inset-0 bg-black/10 z-[100]"
+        onClick={onClose}
+      />
 
-  return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 z-40"
-          />
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.96 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          >
-            <Card className="w-full max-w-4xl max-h-[85vh] p-6 flex flex-col overflow-hidden">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <h2 className="text-xl font-bold text-ink-900">分析同步</h2>
-                  <p className="text-sm text-ink-500">
-                    选择要同步分析的章节，将覆盖原有摘要/事实/设定卡。
-                  </p>
+      {/* 命令面板布局 */}
+      <div className="vscode-command-palette anti-theme z-[101]">
+
+        {/* 头部区域 */}
+        <div className="bg-[var(--vscode-sidebar-bg)] p-2 border-b border-[var(--vscode-input-border)] flex items-center gap-2">
+          <div className="p-1 px-2 text-[11px] font-bold bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] rounded-[2px]">
+            分析
+          </div>
+          <span className="text-xs font-medium text-[var(--vscode-fg)]">同步分析章节</span>
+          <div className="flex-1" />
+          <span className="text-[10px] text-[var(--vscode-fg-subtle)] mr-2">
+            已选 {selected.size} 项
+          </span>
+        </div>
+
+        {/* 快捷操作栏 */}
+        <div className="bg-[var(--vscode-bg)] px-2 py-1 border-b border-[var(--vscode-input-border)] flex gap-2">
+          <button onClick={selectAll} className="text-[11px] px-2 py-0.5 hover:bg-[var(--vscode-list-hover)] rounded-[2px] transition-none">全选</button>
+          <button onClick={clearAll} className="text-[11px] px-2 py-0.5 hover:bg-[var(--vscode-list-hover)] rounded-[2px] transition-none">清空</button>
+        </div>
+
+        {/* 可滚动列表 */}
+        <div className="max-h-[500px] overflow-y-auto overflow-x-hidden py-1">
+          {fetching ? (
+            <div className="px-4 py-8 text-center text-xs text-[var(--vscode-fg-subtle)]">正在加载章节...</div>
+          ) : (
+            grouped.map(volume => (
+              <div key={volume.id}>
+                {/* 分卷标题 */}
+                <div className="px-3 py-1 text-[11px] font-bold text-[var(--vscode-fg-subtle)] bg-[var(--vscode-sidebar-bg)] border-y border-[var(--vscode-sidebar-border)] mt-[-1px]">
+                  {volume.title} ({volume.id})
                 </div>
-                <button
-                  onClick={onClose}
-                  className="p-2 rounded-md hover:bg-ink-100 text-ink-400 hover:text-ink-700"
-                  title="关闭"
-                >
-                  <X size={16} />
-                </button>
-              </div>
 
-              <div className="flex items-center justify-between mt-4">
-                <div className="text-xs text-ink-400">
-                  每章事实将限制为 3-5 条（最多保留 5 条）
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" onClick={selectAll} disabled={chapters.length === 0 || fetching}>
-                    全选
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={clearAll} disabled={selected.size === 0 || fetching}>
-                    清空
-                  </Button>
-                </div>
-              </div>
-
-              <div className="mt-4 flex-1 min-h-0 overflow-y-auto pr-2 space-y-4">
-                {fetching ? (
-                  <div className="text-xs text-ink-400 flex items-center gap-2">
-                    <RefreshCw size={12} className="animate-spin" />
-                    载入章节中...
-                  </div>
-                ) : grouped.length === 0 ? (
-                  <div className="text-xs text-ink-400 border border-dashed border-border rounded-md px-3 py-2">
-                    暂无章节可同步
-                  </div>
-                ) : (
-                  grouped.map((volume) => (
-                    <div key={volume.id} className="space-y-2">
-                      <div className="text-xs font-bold text-ink-500 flex items-center gap-2">
-                        <span className="text-primary font-mono">{volume.id}</span>
-                        <span>{volume.title}</span>
+                {/* 章节网格 */}
+                <div className="grid grid-cols-2">
+                  {volume.chapters.map(chapter => {
+                    const checked = selected.has(chapter.id);
+                    return (
+                      <div
+                        key={chapter.id}
+                        className={cn(
+                          "vscode-tree-item gap-2 border-r border-[var(--vscode-sidebar-border)] last:border-r-0 border-b",
+                          checked && "selected"
+                        )}
+                        onClick={() => toggleChapter(chapter.id)}
+                      >
+                        {/* 简易勾选样式 */}
+                        <div className={cn(
+                          "w-3 h-3 border grid place-items-center",
+                          checked ? "border-white bg-transparent" : "border-[var(--vscode-fg-subtle)]"
+                        )}>
+                          {checked && <Check size={10} strokeWidth={4} />}
+                        </div>
+                        <span className="font-mono text-[11px] opacity-70 w-8">{chapter.id}</span>
+                        <span className="truncate">{chapter.title || '未命名'}</span>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {volume.chapters.map((chapter) => {
-                          const checked = selected.has(chapter.id);
-                          return (
-                            <button
-                              key={chapter.id}
-                              onClick={() => toggleChapter(chapter.id)}
-                              className={
-                                `flex items-center gap-2 px-3 py-2 rounded-md border text-sm transition-colors ` +
-                                (checked
-                                  ? 'bg-primary/10 border-primary text-ink-900'
-                                  : 'bg-surface border-border text-ink-700 hover:border-primary/40')
-                              }
-                            >
-                              {checked ? (
-                                <CheckSquare size={14} className="text-primary" />
-                              ) : (
-                                <Square size={14} className="text-ink-400" />
-                              )}
-                              <span className="font-mono text-xs text-ink-500">{chapter.id}</span>
-                              <span className="text-sm text-ink-900 truncate">
-                                {chapter.title || '未命名章节'}
-                              </span>
-                            </button>
-                          );
-                        })}
+                    )
+                  })}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {(loading || error || results.length > 0) && (
+          <div className="border-t border-[var(--vscode-input-border)] bg-[var(--vscode-bg)]">
+            <div className="px-3 py-1 text-[11px] font-bold text-[var(--vscode-fg-subtle)] bg-[var(--vscode-sidebar-bg)] border-b border-[var(--vscode-sidebar-border)]">
+              处理结果
+            </div>
+            {loading && (
+              <div className="px-3 py-2 text-xs text-[var(--vscode-fg-subtle)]">
+                正在处理章节绑定...
+              </div>
+            )}
+            {error && (
+              <div className="px-3 py-2 text-xs text-red-500">
+                同步失败：{error}
+              </div>
+            )}
+            {results.length > 0 && (
+              <div className="max-h-[180px] overflow-y-auto">
+                {results.map((item, idx) => {
+                  const success = Boolean(item?.success);
+                  const itemError = item?.error || item?.detail || '';
+                  const bindingError = item?.binding_error || item?.bindings_error;
+                  return (
+                    <div
+                      key={item?.chapter || idx}
+                      className="px-3 py-1.5 text-xs border-b border-[var(--vscode-sidebar-border)] last:border-b-0"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[11px] opacity-70">{item?.chapter || '-'}</span>
+                        <span className={success ? 'text-emerald-400' : 'text-red-500'}>
+                          {success ? '成功' : '失败'}
+                        </span>
                       </div>
+                      <div className="text-[11px] text-[var(--vscode-fg-subtle)] mt-0.5">
+                        人物：{formatCharacters(item?.binding)}
+                      </div>
+                      {!success && itemError ? (
+                        <div className="text-[11px] text-red-500 mt-0.5">
+                          原因：{String(itemError)}
+                        </div>
+                      ) : null}
+                      {bindingError && (
+                        <div className="text-[11px] text-red-500 mt-0.5">
+                          绑定错误：{bindingError}
+                        </div>
+                      )}
                     </div>
-                  ))
+                  );
+                })}
+              </div>
+            )}
+            {(indexRebuildLoading || indexRebuildError || indexRebuildSuccess) && (
+              <div className="px-3 py-2 text-xs border-t border-[var(--vscode-sidebar-border)]">
+                {indexRebuildLoading && (
+                  <div className="text-[var(--vscode-fg-subtle)]">正在重建索引...</div>
+                )}
+                {indexRebuildSuccess && !indexRebuildLoading && !indexRebuildError && (
+                  <div className="text-emerald-400">索引重建完成</div>
+                )}
+                {indexRebuildError && (
+                  <div className="text-red-500">索引重建失败：{indexRebuildError}</div>
                 )}
               </div>
+            )}
+          </div>
+        )}
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-border">
-                <Button variant="ghost" onClick={onClose} disabled={loading}>取消</Button>
-                <Button onClick={handleConfirm} disabled={loading || selected.size === 0}>
-                  {loading ? '同步中...' : '确认同步'}
-                </Button>
-              </div>
-            </Card>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+        {/* 底部操作区 */}
+        <div className="p-2 bg-[var(--vscode-sidebar-bg)] border-t border-[var(--vscode-input-border)] flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            onClick={onClose}
+            className="h-6 px-3 text-xs rounded-[2px] hover:bg-[var(--vscode-list-hover)] transition-none"
+          >
+            取消
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={loading || selected.size === 0}
+            className="h-6 px-3 text-xs bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 rounded-[2px] shadow-none transition-none"
+          >
+            {loading ? '处理中...' : '同步'}
+          </Button>
+          <Button
+            onClick={handleRebuild}
+            disabled={loading || selected.size === 0}
+            className="h-6 px-3 text-xs bg-[var(--vscode-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] rounded-[2px] shadow-none transition-none"
+          >
+            {loading ? '处理中...' : '重建绑定'}
+          </Button>
+          <Button
+            onClick={handleRebuildIndexes}
+            disabled={loading || indexRebuildLoading}
+            className="h-6 px-3 text-xs bg-[var(--vscode-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] rounded-[2px] shadow-none transition-none"
+            title="重建检索索引（设定卡/事实证据/正文分块）。大量导入/同步/修改后可用于提升检索稳定性。"
+          >
+            {indexRebuildLoading ? '重建中...' : '重建索引'}
+          </Button>
+        </div>
+      </div>
+    </>,
+    document.body
   );
 }

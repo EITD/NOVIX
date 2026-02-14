@@ -1,8 +1,8 @@
 @echo off
-REM NOVIX Frontend Startup Script for Windows
+REM WenShape Frontend Startup Script for Windows
 
 echo ========================================
-echo   NOVIX Frontend
+echo   WenShape Frontend
 echo ========================================
 echo.
 
@@ -34,8 +34,13 @@ if not exist "node_modules\" (
 
 echo [2/2] Starting development server...
 echo.
-echo   Frontend: http://localhost:3000
-echo   Backend:  http://localhost:8000 (make sure it is running)
+if "%VITE_DEV_PORT%"=="" set "VITE_DEV_PORT=%WENSHAPE_FRONTEND_PORT%"
+if "%VITE_DEV_PORT%"=="" set "VITE_DEV_PORT=3000"
+if "%VITE_BACKEND_PORT%"=="" set "VITE_BACKEND_PORT=%WENSHAPE_BACKEND_PORT%"
+if "%VITE_BACKEND_PORT%"=="" set "VITE_BACKEND_PORT=8000"
+if "%VITE_BACKEND_URL%"=="" set "VITE_BACKEND_URL=http://localhost:%VITE_BACKEND_PORT%"
+echo   Frontend: http://localhost:%VITE_DEV_PORT%
+echo   Backend:  %VITE_BACKEND_URL% (make sure it is running)
 echo.
 
 call npm run dev

@@ -9,31 +9,48 @@ from typing import List, Optional
 
 from app.schemas.volume import Volume, VolumeCreate, VolumeStats, VolumeSummary
 from app.storage.base import BaseStorage
+from app.storage.file_lock import get_file_lock
 
 
 class VolumeStorage(BaseStorage):
     """File-based storage for volumes."""
 
     async def create_volume(self, project_id: str, volume_create: VolumeCreate) -> Volume:
-        """Create a new volume with auto-incremented ID."""
+        """
+        Create a new volume with auto-incremented ID.
+        Uses file lock to prevent race conditions on concurrent creation.
+        使用文件锁防止并发创建导致的 ID 冲突。
+        """
         await self._ensure_default_volume(project_id)
 
-        volumes = await self.list_volumes(project_id)
-        next_volume_num = len(volumes) + 1
-        volume_id = f"V{next_volume_num}"
+        # Use a lock file to serialize volume creation for the same project
+        lock_path = self.get_project_path(project_id) / "volumes" / ".create_lock"
+        self.ensure_dir(lock_path.parent)
+        file_lock = get_file_lock()
 
-        volume = Volume(
-            id=volume_id,
-            project_id=project_id,
-            title=volume_create.title,
-            summary=volume_create.summary,
-            order=volume_create.order or next_volume_num,
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
-        )
+        async with file_lock.lock(lock_path, timeout=10.0):
+            volumes = await self.list_volumes(project_id)
+            existing_ids = {v.id for v in volumes}
 
-        await self._save_volume(project_id, volume)
-        return volume
+            # Find next available volume ID
+            next_volume_num = len(volumes) + 1
+            volume_id = f"V{next_volume_num}"
+            while volume_id in existing_ids:
+                next_volume_num += 1
+                volume_id = f"V{next_volume_num}"
+
+            volume = Volume(
+                id=volume_id,
+                project_id=project_id,
+                title=volume_create.title,
+                summary=volume_create.summary,
+                order=volume_create.order or next_volume_num,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+            )
+
+            await self._save_volume(project_id, volume)
+            return volume
 
     async def get_volume(self, project_id: str, volume_id: str) -> Optional[Volume]:
         """Get volume metadata."""

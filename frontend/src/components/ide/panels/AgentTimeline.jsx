@@ -1,15 +1,13 @@
 /**
- * AgentTimeline Component / Agent 执行时间线组件
- * 
- * 可视化展示多 Agent 协作过程 (重构版：回合制分组 + 中文本地化)
- * Visualizes multi-agent collaboration (Refactored: Turn-based Grouping + Chinese Localization)
+ * AgentTimeline - Agent 执行时间线
+ * 可视化展示多 Agent 协作过程（回合制分组）。
  */
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../ui/core';
 
-// --- Localized Mappings / 本地化映射 ---
+// --- 本地化映射 ---
 
 const AGENT_NAMES = {
     archivist: '档案员',
@@ -53,16 +51,16 @@ const EVENT_ICONS = {
     diff_generated: '📝'
 };
 
-// --- Helper: Event Grouping Logic ---
+// --- 事件分组逻辑 ---
 
 const groupEventsByTurn = (events) => {
     const turns = [];
     let currentTurn = null;
 
     events.forEach(event => {
-        // 1. Start a new turn
+        // 1. 开启新回合
         if (event.type === 'agent_start') {
-            if (currentTurn) turns.push(currentTurn); // Close prev if exists
+            if (currentTurn) turns.push(currentTurn); // 结束上一回合
             currentTurn = {
                 id: `turn_${event.id}`,
                 agent: event.agent_name,
@@ -72,7 +70,7 @@ const groupEventsByTurn = (events) => {
                 metrics: { tokens: 0, diffs: 0, tools: 0 }
             };
         }
-        // 2. End current turn
+        // 2. 结束当前回合
         else if (event.type === 'agent_end' || event.type === 'agent_error') {
             if (currentTurn) {
                 currentTurn.events.push(event);
@@ -82,7 +80,7 @@ const groupEventsByTurn = (events) => {
                 turns.push(currentTurn);
                 currentTurn = null;
             } else {
-                // Orphaned end event (shouldn't happen ideally)
+                // 异常结束事件（理论上不应出现）
                 turns.push({
                     id: `orphan_${event.id}`,
                     agent: event.agent_name,
@@ -92,11 +90,11 @@ const groupEventsByTurn = (events) => {
                 });
             }
         }
-        // 3. Add events to current turn
+        // 3. 向当前回合追加事件
         else if (currentTurn) {
             currentTurn.events.push(event);
 
-            // Update metrics
+            // 更新统计
             if (event.type === 'llm_request') {
                 currentTurn.metrics.tokens += (event.data.tokens?.total || 0);
             }
@@ -107,9 +105,9 @@ const groupEventsByTurn = (events) => {
                 currentTurn.metrics.tools += 1;
             }
         }
-        // 4. Standalone events (e.g. handoff outside start/end distinct block)
+        // 4. 独立事件（例如回合外 handoff）
         else {
-            // Treat handoff as a special separator, not a turn
+            // handoff 作为分隔符
             if (event.type === 'handoff') {
                 turns.push({
                     id: `handoff_${event.id}`,
@@ -120,23 +118,23 @@ const groupEventsByTurn = (events) => {
         }
     });
 
-    // Push last active turn if exists
+    // 收尾未结束回合
     if (currentTurn) turns.push(currentTurn);
 
     return turns;
 };
 
-// --- Sub-components ---
+// --- 子组件 ---
 
 const HandoffSeparator = ({ data }) => (
     <div className="flex items-center justify-center my-4 opacity-70">
-        <div className="h-[1px] bg-border flex-1 mx-4" />
-        <div className="flex items-center gap-2 text-[10px] text-ink-400 bg-surface px-3 py-1 rounded-full border border-border">
+        <div className="h-[1px] bg-[var(--vscode-sidebar-border)] flex-1 mx-4" />
+        <div className="flex items-center gap-2 text-[10px] text-[var(--vscode-fg-subtle)] bg-[var(--vscode-bg)] px-3 py-1 rounded-full border border-[var(--vscode-sidebar-border)]">
             <span>{AGENT_NAMES[data.agent_name] || data.agent_name}</span>
             <span>→</span>
             <span>{AGENT_NAMES[data.data.to] || data.data.to}</span>
         </div>
-        <div className="h-[1px] bg-border flex-1 mx-4" />
+        <div className="h-[1px] bg-[var(--vscode-sidebar-border)] flex-1 mx-4" />
     </div>
 );
 
@@ -148,32 +146,32 @@ const TurnCard = ({ turn, expanded, onToggle }) => {
         <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-background border border-border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow"
+            className="bg-[var(--vscode-bg)] border border-[var(--vscode-sidebar-border)] rounded-[6px] overflow-hidden shadow-none"
             style={{ borderLeft: `4px solid ${agentColor}` }}
         >
             {/* Header */}
             <div
                 onClick={onToggle}
-                className="p-3 flex items-center justify-between cursor-pointer bg-ink-50/30 hover:bg-ink-50/80 transition-colors"
+                className="p-3 flex items-center justify-between cursor-pointer bg-[var(--vscode-sidebar-bg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
                 title="点击展开详情"
             >
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-sm" style={{ backgroundColor: agentColor }}>
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: agentColor }}>
                         {localizedName[0]}
                     </div>
                     <div>
                         <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-ink-800">{localizedName}</span>
+                            <span className="font-bold text-sm text-[var(--vscode-fg)]">{localizedName}</span>
                             <StatusBadge status={turn.status} />
                         </div>
-                        <div className="flex items-center gap-3 mt-1 text-[10px] text-ink-400">
+                        <div className="flex items-center gap-3 mt-1 text-[10px] text-[var(--vscode-fg-subtle)]">
                             {turn.duration && <span>⏱️ {turn.duration}s</span>}
                             {turn.metrics.tokens > 0 && <span>💎 {turn.metrics.tokens} Tok</span>}
                             {turn.metrics.diffs > 0 && <span>📝 {turn.metrics.diffs} 变更</span>}
                         </div>
                     </div>
                 </div>
-                <div className="text-ink-400">
+                <div className="text-[var(--vscode-fg-subtle)]">
                     {expanded ? '▲' : '▼'}
                 </div>
             </div>
@@ -185,7 +183,7 @@ const TurnCard = ({ turn, expanded, onToggle }) => {
                         initial={{ height: 0 }}
                         animate={{ height: 'auto' }}
                         exit={{ height: 0 }}
-                        className="overflow-hidden border-t border-border/50 bg-white"
+                        className="overflow-hidden border-t border-[var(--vscode-sidebar-border)] bg-[var(--vscode-bg)]"
                     >
                         <div className="p-3 space-y-3">
                             {turn.events.map(event => (
@@ -207,7 +205,7 @@ const StatusBadge = ({ status }) => {
 };
 
 const DetailEventRow = ({ event }) => {
-    // Skip start/end events in detail view as they are implied by the card
+    // 详情中忽略 start/end（已在卡片体现）
     if (event.type === 'agent_start' || event.type === 'agent_end') return null;
 
     const label = EVENT_LABELS[event.type] || event.type;
@@ -216,15 +214,15 @@ const DetailEventRow = ({ event }) => {
 
     return (
         <div className="flex gap-3 text-xs group">
-            <div className="w-12 text-[10px] text-ink-300 font-mono pt-1 text-right shrink-0">{time}</div>
+            <div className="w-12 text-[10px] text-[var(--vscode-fg-subtle)] font-mono pt-1 text-right shrink-0">{time}</div>
             <div className="w-6 flex flex-col items-center">
-                <div className="w-6 h-6 rounded-md bg-ink-50 text-ink-500 flex items-center justify-center text-sm border border-border/50 group-hover:border-primary/30 group-hover:text-primary transition-colors">
+                <div className="w-6 h-6 rounded-[4px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg-subtle)] flex items-center justify-center text-sm border border-[var(--vscode-sidebar-border)] group-hover:border-[var(--vscode-focus-border)] group-hover:text-[var(--vscode-fg)] transition-colors">
                     {icon}
                 </div>
-                <div className="w-[1px] bg-ink-100 flex-1 my-1 last:hidden" />
+                <div className="w-[1px] bg-[var(--vscode-sidebar-border)] flex-1 my-1 last:hidden" />
             </div>
             <div className="flex-1 pb-2">
-                <div className="font-medium text-ink-700 mb-0.5">{label}</div>
+                <div className="font-medium text-[var(--vscode-fg)] mb-0.5">{label}</div>
                 <EventPayloadRenderer event={event} />
             </div>
         </div>
@@ -236,12 +234,12 @@ const EventPayloadRenderer = ({ event }) => {
 
     if (type === 'llm_request') {
         return (
-            <div className="text-[10px] bg-ink-50/50 p-2 rounded border border-border/50 font-mono text-ink-500">
-                <div>Model: {data.model}</div>
+            <div className="text-[10px] bg-[var(--vscode-input-bg)] p-2 rounded-[4px] border border-[var(--vscode-sidebar-border)] font-mono text-[var(--vscode-fg-subtle)]">
+                <div>模型：{data.model}</div>
                 <div className="flex gap-2 mt-1">
-                    <span className="text-blue-600">In: {data.tokens?.prompt}</span>
-                    <span className="text-green-600">Out: {data.tokens?.completion}</span>
-                    <span className="text-ink-400">{data.latency_ms}ms</span>
+                    <span className="text-blue-600">输入：{data.tokens?.prompt}</span>
+                    <span className="text-green-600">输出：{data.tokens?.completion}</span>
+                    <span className="text-[var(--vscode-fg-subtle)]">{data.latency_ms}ms</span>
                 </div>
             </div>
         );
@@ -250,11 +248,11 @@ const EventPayloadRenderer = ({ event }) => {
     if (type === 'context_select') {
         return (
             <div className="text-[10px]">
-                <span className="text-ink-500">选中 </span>
-                <span className="font-bold text-ink-800">{data.selected}</span>
-                <span className="text-ink-300"> / {data.candidates} 项</span>
-                <div className="h-1 bg-ink-100 rounded-full mt-1 w-24 overflow-hidden">
-                    <div className="h-full bg-blue-500" style={{ width: `${(data.selected / data.candidates) * 100}%` }} />
+                <span className="text-[var(--vscode-fg-subtle)]">选中 </span>
+                <span className="font-bold text-[var(--vscode-fg)]">{data.selected}</span>
+                <span className="text-[var(--vscode-fg-subtle)]"> / {data.candidates} 项</span>
+                <div className="h-1 bg-[var(--vscode-list-hover)] rounded-full mt-1 w-24 overflow-hidden">
+                    <div className="h-full bg-[var(--vscode-focus-border)]" style={{ width: `${(data.selected / data.candidates) * 100}%` }} />
                 </div>
             </div>
         );
@@ -269,9 +267,9 @@ const EventPayloadRenderer = ({ event }) => {
         );
     }
 
-    // Default JSON dump for others (Tool calls etc)
+    // 其他类型默认展示 JSON
     return (
-        <pre className="text-[10px] text-ink-400 overflow-x-auto whitespace-pre-wrap font-mono bg-ink-50/30 p-1.5 rounded">
+        <pre className="text-[10px] text-[var(--vscode-fg-subtle)] overflow-x-auto whitespace-pre-wrap font-mono bg-[var(--vscode-input-bg)] p-1.5 rounded-[4px] border border-[var(--vscode-sidebar-border)]">
             {JSON.stringify(data, (key, value) => {
                 if (key === 'content' && typeof value === 'string' && value.length > 100) return value.substring(0, 100) + '...';
                 return value;
@@ -280,7 +278,7 @@ const EventPayloadRenderer = ({ event }) => {
     );
 };
 
-// --- Main Component ---
+// --- 主组件 ---
 
 const AgentTimeline = ({ events = [], autoScroll = true, maxHeight = '100%' }) => {
     const containerRef = useRef(null);
@@ -314,9 +312,9 @@ const AgentTimeline = ({ events = [], autoScroll = true, maxHeight = '100%' }) =
     };
 
     return (
-        <div ref={containerRef} className="h-full overflow-y-auto p-3 space-y-4 custom-scrollbar bg-surface/30" style={{ maxHeight }}>
+        <div ref={containerRef} className="h-full overflow-y-auto p-3 space-y-4 custom-scrollbar bg-[var(--vscode-bg)]" style={{ maxHeight }}>
             {turns.length === 0 ? (
-                <div className="text-center py-10 text-ink-400 text-xs">
+                <div className="text-center py-10 text-[var(--vscode-fg-subtle)] text-xs">
                     <p>暂无行动记录</p>
                     <p className="opacity-50 mt-1">等待任务开始...</p>
                 </div>

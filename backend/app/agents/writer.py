@@ -1,16 +1,53 @@
-﻿"""
-Writer Agent
-Generates draft based on scene brief.
+﻿# -*- coding: utf-8 -*-
+"""
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  撰稿人智能体 - 根据场景简要和上下文信息生成章节草稿。
+  Writer Agent responsible for generating novel draft chapters based on scene briefs.
 """
 
-from typing import Any, Dict, List
-import json
+from typing import Any, Dict, List, Optional
+
+from app.config import config as app_cfg
+from app.utils.logger import get_logger
+from app.utils.llm_output import parse_json_payload
 
 from app.agents.base import BaseAgent
+from app.prompts import WRITER_SYSTEM_PROMPT, writer_draft_prompt, writer_questions_prompt, writer_research_plan_prompt
+from app.schemas.draft import SceneBrief
+from app.schemas.card import StyleCard
+
+logger = get_logger(__name__)
+
+_writer_cfg = app_cfg.get("writer", {})
+DEFAULT_TARGET_WORD_COUNT = int(_writer_cfg.get("default_target_word_count", 3000))
+
+
+def _get_field(obj, field, default=""):
+    """Safely extract field from object or dict, handling missing attributes gracefully."""
+    if hasattr(obj, field):
+        return getattr(obj, field, default)
+    if isinstance(obj, dict):
+        return obj.get(field, default)
+    return default
 
 
 class WriterAgent(BaseAgent):
-    """Agent responsible for generating drafts."""
+    """
+    撰稿人智能体 - 生成章节初稿
+
+    Agent responsible for generating novel draft chapters based on
+    scene briefs, context packages, and user feedback. Supports streaming output,
+    pre-writing question generation, and research plan suggestion.
+
+    Attributes:
+        DEFAULT_QUESTIONS: Pre-writing questions for user confirmation.
+    """
 
     DEFAULT_QUESTIONS = [
         {"type": "plot_point", "text": "为达成本章目标，尚缺的剧情/世界信息是什么？"},
@@ -19,23 +56,28 @@ class WriterAgent(BaseAgent):
     ]
 
     def get_agent_name(self) -> str:
+        """获取智能体标识 - 返回 'writer'"""
         return "writer"
 
     def get_system_prompt(self) -> str:
-        return (
-            "You are the Writer (主笔)。\n"
-            "【最高优先】严禁违背用户指令、章节目标、事实摘要和禁忌。\n"
-            "职责：\n"
-            "1. 基于场景简报撰写正文，严格遵守文风卡与事实约束。\n"
-            "2. 不新增设定，若信息不足必须用[TO_CONFIRM:细节]标记。\n"
-            "3. 维护角色边界与时间线一致性。\n"
-            "原则：章节目标优先，只选取相关卡片/事实；先生成3-6个写作节拍计划，再成文。\n"
-            "输出：先输出<plan>节拍，再输出<draft>正文；保持中文叙事，避免重复啰嗦。\n"
-            "【再次提醒】宁缺毋滥，不得凭空捏造或违背事实与指令。\n"
-        )
+        """获取系统提示词 - 撰稿人专用"""
+        return WRITER_SYSTEM_PROMPT
 
     async def execute(self, project_id: str, chapter: str, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate draft for a chapter."""
+        """
+        执行撰稿 - 生成章节初稿并保存
+
+        Main entry point for draft generation. Loads scene brief, gathers context,
+        generates draft via LLM, extracts confirmations, and saves version.
+
+        Args:
+            project_id: Project identifier.
+            chapter: Chapter identifier.
+            context: Context dict with scene_brief, style_card, facts, etc.
+
+        Returns:
+            Dict with success status, draft object, word count, pending confirmations.
+        """
         scene_brief = context.get("scene_brief")
         if not scene_brief:
             scene_brief = await self.draft_storage.get_scene_brief(project_id, chapter)
@@ -43,6 +85,9 @@ class WriterAgent(BaseAgent):
         if not scene_brief:
             return {"success": False, "error": "Scene brief not found"}
 
+        # ============================================================================
+        # Load previous chapter context / 加载前置章节信息
+        # ============================================================================
         previous_summaries = context.get("previous_summaries")
         context_package = context.get("context_package")
         if previous_summaries is None and context_package:
@@ -50,29 +95,40 @@ class WriterAgent(BaseAgent):
         if previous_summaries is None:
             previous_summaries = await self._load_previous_summaries(project_id, chapter)
 
+        # ============================================================================
+        # Extract context from request / 提取上下文数据
+        # ============================================================================
         style_card = context.get("style_card")
         character_cards = context.get("character_cards") or []
         world_cards = context.get("world_cards") or []
         facts = context.get("facts") or []
+        text_chunks = context.get("text_chunks") or []
+        working_memory = context.get("working_memory")
+        unresolved_gaps = context.get("unresolved_gaps") or []
         timeline = context.get("timeline") or []
         character_states = context.get("character_states") or []
         chapter_goal = context.get("chapter_goal")
         user_answers = context.get("user_answers") or []
         user_feedback = context.get("user_feedback") or ""
+        evidence_pack = context.get("evidence_pack")
 
         draft_content = await self._generate_draft(
             scene_brief=scene_brief,
-            target_word_count=context.get("target_word_count", 3000),
+            target_word_count=context.get("target_word_count", DEFAULT_TARGET_WORD_COUNT),
             previous_summaries=previous_summaries,
             style_card=style_card,
             character_cards=character_cards,
             world_cards=world_cards,
             facts=facts,
+            text_chunks=text_chunks,
+            working_memory=working_memory,
+            unresolved_gaps=unresolved_gaps,
             timeline=timeline,
             character_states=character_states,
             chapter_goal=chapter_goal,
             user_answers=user_answers,
             user_feedback=user_feedback,
+            evidence_pack=evidence_pack,
         )
 
         pending_confirmations = self._extract_confirmations(draft_content)
@@ -87,6 +143,13 @@ class WriterAgent(BaseAgent):
             pending_confirmations=pending_confirmations,
         )
 
+        # Build chapter bindings to enable context linking
+        try:
+            from app.services.chapter_binding_service import chapter_binding_service
+            await chapter_binding_service.build_bindings(project_id, chapter, force=True)
+        except Exception as exc:
+            logger.warning("Failed to build chapter bindings for %s:%s: %s", project_id, chapter, exc)
+
         return {
             "success": True,
             "draft": draft,
@@ -97,21 +160,27 @@ class WriterAgent(BaseAgent):
     async def generate_questions(
         self,
         context_package: Dict[str, Any],
-        scene_brief: Any,
+        scene_brief: Optional[SceneBrief],
         chapter_goal: str
     ) -> List[Dict[str, str]]:
-        """Generate pre-writing questions for user confirmation."""
-        def get_field(obj, field, default=""):
-            if hasattr(obj, field):
-                return getattr(obj, field, default)
-            if isinstance(obj, dict):
-                return obj.get(field, default)
-            return default
+        """
+        生成写前问卷 - 引导用户确认重要细节
 
-        brief_chapter = get_field(scene_brief, "chapter", "")
-        brief_title = get_field(scene_brief, "title", "")
-        brief_goal = get_field(scene_brief, "goal", "")
-        brief_characters = get_field(scene_brief, "characters", [])
+        Generate pre-writing questions to clarify user intent and context.
+        Returns either LLM-generated questions or default template questions.
+
+        Args:
+            context_package: Dict with summary data from previous chapters.
+            scene_brief: Scene brief object with chapter context.
+            chapter_goal: User-provided chapter goal/objective.
+
+        Returns:
+            List of 3 question dicts with "type" and "text" keys.
+        """
+        brief_chapter = _get_field(scene_brief, "chapter", "")
+        brief_title = _get_field(scene_brief, "title", "")
+        brief_goal = _get_field(scene_brief, "goal", "")
+        brief_characters = _get_field(scene_brief, "characters", [])
 
         characters_text = []
         for char in brief_characters or []:
@@ -145,71 +214,106 @@ class WriterAgent(BaseAgent):
                         if events:
                             block.append("事件：" + "；".join([str(e) for e in events[:4]]))
                         context_items.append("\n".join(block))
-
-        system_prompt = (
-            "你是主笔，写作前必须针对用户指令与事实摘要提出关键反问，"
-            "目的是补齐缺失信息、避免违背既有事实与章节目标。"
-        )
-
-        user_prompt = (
-            "仅返回JSON数组（恰好3条），每条包含 type 与 text。"
-            "type 只能是 plot_point / character_change / detail_gap。"
-            "围绕章节目标与事实摘要，提出最缺的关键信息，必须具体、可回答、不可空泛。"
-        )
+        prompt = writer_questions_prompt(context_items)
 
         messages = self.build_messages(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
             context_items=context_items,
         )
 
-        try:
-            raw = await self.call_llm(messages)
-            data = json.loads(raw.strip())
-            if isinstance(data, list) and len(data) == 3:
-                cleaned = []
-                for item in data:
-                    if not isinstance(item, dict):
-                        continue
-                    q_type = item.get("type")
-                    text = item.get("text")
-                    if q_type and text:
-                        cleaned.append({"type": q_type, "text": text})
-                if len(cleaned) == 3:
-                    return cleaned
-        except Exception:
-            pass
+        raw = await self.call_llm(messages)
+        data, err = parse_json_payload(raw, expected_type=list)
+        if err:
+            logger.warning("Writer questions parse failed: %s", err)
+            logger.debug("Writer questions raw preview: %s", str(raw or "")[:200])
+        if isinstance(data, list) and len(data) == 3:
+            cleaned = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                q_type = item.get("type")
+                text = item.get("text")
+                if q_type and text:
+                    cleaned.append({"type": q_type, "text": text})
+            if len(cleaned) == 3:
+                return cleaned
 
         return list(self.DEFAULT_QUESTIONS)
 
-    async def execute_stream(self, project_id: str, chapter: str, context: Dict[str, Any]):
-        """Stream draft generation token by token."""
-        scene_brief = context.get("scene_brief")
-        if not scene_brief:
-            yield "[Error: Scene brief not found]"
-            return
+    async def generate_research_plan(
+        self,
+        chapter_goal: str,
+        unresolved_gaps: List[Dict[str, Any]],
+        evidence_stats: Dict[str, Any],
+        round_index: int,
+    ) -> Dict[str, Any]:
+        """
+        生成下一轮检索计划 - 生成查询关键字
 
-        messages = self._build_draft_messages(
-            scene_brief=scene_brief,
-            target_word_count=context.get("target_word_count", 3000),
-            previous_summaries=context.get("previous_summaries"),
-            style_card=context.get("style_card"),
-            character_cards=context.get("character_cards") or [],
-            world_cards=context.get("world_cards") or [],
-            facts=context.get("facts") or [],
-            timeline=context.get("timeline") or [],
-            character_states=context.get("character_states") or [],
-            chapter_goal=context.get("chapter_goal"),
-            user_answers=context.get("user_answers") or [],
-            user_feedback=context.get("user_feedback") or "",
-            include_plan=False,
+        Generate a compact research plan (search queries) for the next evidence retrieval round.
+        Helps system find relevant information to fill unresolved gaps.
+
+        Args:
+            chapter_goal: Chapter objective/target.
+            unresolved_gaps: List of unresolved information gaps.
+            evidence_stats: Statistics about current evidence pack.
+            round_index: Which retrieval round this is (0-based).
+
+        Returns:
+            Dict with "queries" (list of search strings) and "note" (strategy note).
+        """
+        gap_texts = []
+        for gap in unresolved_gaps or []:
+            if not isinstance(gap, dict):
+                continue
+            text = str(gap.get("text") or "").strip()
+            if text:
+                gap_texts.append(text)
+        prompt = writer_research_plan_prompt(
+            chapter_goal=chapter_goal,
+            gap_texts=gap_texts,
+            evidence_stats=evidence_stats,
+            round_index=round_index,
         )
 
-        async for chunk in self.call_llm_stream(messages):
-            yield chunk
+        messages = self.build_messages(
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
+            context_items=[],
+        )
+
+        raw = await self.call_llm(messages)
+        data, err = parse_json_payload(raw, expected_type=dict)
+        if err:
+            logger.warning("Writer plan parse failed: %s", err)
+            logger.debug("Writer plan raw preview: %s", str(raw or "")[:200])
+        if isinstance(data, dict):
+            queries = data.get("queries") or []
+            if isinstance(queries, list):
+                cleaned = [str(q).strip() for q in queries if str(q).strip()]
+                if cleaned:
+                    return {"queries": cleaned[:4], "note": str(data.get("note") or "").strip()}
+
+        # Fallback: use gap texts as queries
+        fallback = [t for t in gap_texts if t][:3]
+        return {"queries": fallback, "note": "fallback_from_gaps"}
 
     async def execute_stream_draft(self, project_id: str, chapter: str, context: Dict[str, Any]):
-        """Stream draft text only (no plan tags)."""
+        """
+        流式生成草稿 - 逐token实时输出，不包含计划标记
+
+        Stream draft generation to frontend in real-time (text only, no plan tags).
+        Useful for long-running operations that need incremental feedback.
+
+        Args:
+            project_id: Project identifier.
+            chapter: Chapter identifier.
+            context: Context dict with same structure as execute().
+
+        Yields:
+            Draft text tokens as they arrive from LLM.
+        """
         scene_brief = context.get("scene_brief")
         if not scene_brief:
             yield "[Error: Scene brief not found]"
@@ -217,17 +321,21 @@ class WriterAgent(BaseAgent):
 
         messages = self._build_draft_messages(
             scene_brief=scene_brief,
-            target_word_count=context.get("target_word_count", 3000),
+            target_word_count=context.get("target_word_count", DEFAULT_TARGET_WORD_COUNT),
             previous_summaries=context.get("previous_summaries"),
             style_card=context.get("style_card"),
             character_cards=context.get("character_cards") or [],
             world_cards=context.get("world_cards") or [],
             facts=context.get("facts") or [],
+            text_chunks=context.get("text_chunks") or [],
+            working_memory=context.get("working_memory"),
+            unresolved_gaps=context.get("unresolved_gaps") or [],
             timeline=context.get("timeline") or [],
             character_states=context.get("character_states") or [],
             chapter_goal=context.get("chapter_goal"),
             user_answers=context.get("user_answers") or [],
             user_feedback=context.get("user_feedback") or "",
+            evidence_pack=context.get("evidence_pack"),
             include_plan=False,
         )
 
@@ -235,15 +343,16 @@ class WriterAgent(BaseAgent):
             yield chunk
 
     async def _load_previous_summaries(self, project_id: str, current_chapter: str) -> List[str]:
-        """Load previous summaries."""
+        """加载前置章节摘要 - 从存储或构建"""
         context_package = await self.draft_storage.get_context_for_writing(project_id, current_chapter)
         return self._build_previous_summaries_from_context(context_package)
 
     def _build_previous_summaries_from_context(self, context_package: Dict[str, Any]) -> List[str]:
-        """Build summary blocks from structured context."""
+        """从结构化上下文包构建摘要块 - 支持多种摘要格式"""
         blocks: List[str] = []
 
         def add_block(items: List[Dict[str, Any]], fields: List[str]) -> None:
+            """Helper: Add formatted summary block for each item"""
             for item in items:
                 parts = [f"{item.get('chapter')}: {item.get('title')}"]
                 for field in fields:
@@ -273,20 +382,50 @@ class WriterAgent(BaseAgent):
 
     async def _generate_draft(
         self,
-        scene_brief: Any,
+        scene_brief: Optional[SceneBrief],
         target_word_count: int,
         previous_summaries: List[str],
-        style_card: Any = None,
+        style_card: Optional[StyleCard] = None,
         character_cards: List[Any] = None,
         world_cards: List[Any] = None,
         facts: List[Any] = None,
+        text_chunks: List[Any] = None,
+        working_memory: str = None,
+        unresolved_gaps: List[Dict[str, Any]] = None,
         timeline: List[Any] = None,
         character_states: List[Any] = None,
         chapter_goal: str = None,
         user_answers: List[Dict[str, str]] = None,
         user_feedback: str = None,
+        evidence_pack: Dict[str, Any] = None,
     ) -> str:
-        """Generate draft using LLM."""
+        """
+        通过 LLM 生成草稿文本 - 核心生成逻辑
+
+        Call LLM to generate draft text with all context combined.
+        Extracts draft content from <draft> tags if present.
+
+        Args:
+            scene_brief: Scene brief for this chapter.
+            target_word_count: Target word count for the draft.
+            previous_summaries: List of previous chapter summaries for context.
+            style_card: Optional style card for consistent writing style.
+            character_cards: Character cards for reference.
+            world_cards: World building cards for consistency.
+            facts: Canon facts to maintain continuity.
+            text_chunks: Related text excerpts.
+            working_memory: Compact working memory state (replaces detailed cards).
+            unresolved_gaps: Information gaps to handle carefully.
+            timeline: Timeline context.
+            character_states: Current character states/relationships.
+            chapter_goal: Chapter objective.
+            user_answers: Pre-writing questions answered by user.
+            user_feedback: User feedback on draft.
+            evidence_pack: Retrieved evidence items.
+
+        Returns:
+            Generated draft text (extracted from tags if present).
+        """
         messages = self._build_draft_messages(
             scene_brief=scene_brief,
             target_word_count=target_word_count,
@@ -295,16 +434,21 @@ class WriterAgent(BaseAgent):
             character_cards=character_cards,
             world_cards=world_cards,
             facts=facts,
+            text_chunks=text_chunks,
+            working_memory=working_memory,
+            unresolved_gaps=unresolved_gaps,
             timeline=timeline,
             character_states=character_states,
             chapter_goal=chapter_goal,
             user_answers=user_answers,
             user_feedback=user_feedback,
+            evidence_pack=evidence_pack,
             include_plan=True,
         )
 
         raw_response = await self.call_llm(messages)
         draft_content = raw_response
+        # Extract draft from <draft>...</draft> tags if present
         if "<draft>" in raw_response:
             start = raw_response.find("<draft>") + 7
             end = raw_response.find("</draft>")
@@ -316,28 +460,26 @@ class WriterAgent(BaseAgent):
 
     def _build_draft_messages(
         self,
-        scene_brief: Any,
+        scene_brief: Optional[SceneBrief],
         target_word_count: int,
         previous_summaries: List[str],
-        style_card: Any = None,
+        style_card: Optional[StyleCard] = None,
         character_cards: List[Any] = None,
         world_cards: List[Any] = None,
         facts: List[Any] = None,
+        text_chunks: List[Any] = None,
+        working_memory: str = None,
+        unresolved_gaps: List[Dict[str, Any]] = None,
         timeline: List[Any] = None,
         character_states: List[Any] = None,
         chapter_goal: str = None,
         user_answers: List[Dict[str, str]] = None,
         user_feedback: str = None,
+        evidence_pack: Dict[str, Any] = None,
         include_plan: bool = True,
     ) -> List[Dict[str, str]]:
         context_items = []
-
-        def get_field(obj, field, default=""):
-            if hasattr(obj, field):
-                return getattr(obj, field, default)
-            if isinstance(obj, dict):
-                return obj.get(field, default)
-            return default
+        use_compact_context = bool(working_memory and str(working_memory).strip())
 
         if chapter_goal:
             context_items.append(
@@ -345,14 +487,14 @@ class WriterAgent(BaseAgent):
                 "Only write content that serves the goal."
             )
 
-        brief_chapter = get_field(scene_brief, "chapter", "")
-        brief_title = get_field(scene_brief, "title", "")
-        brief_goal = get_field(scene_brief, "goal", "")
-        brief_characters = get_field(scene_brief, "characters", [])
-        brief_timeline = get_field(scene_brief, "timeline_context", {})
-        brief_constraints = get_field(scene_brief, "world_constraints", [])
-        brief_style = get_field(scene_brief, "style_reminder", "")
-        brief_forbidden = get_field(scene_brief, "forbidden", [])
+        brief_chapter = _get_field(scene_brief, "chapter", "")
+        brief_title = _get_field(scene_brief, "title", "")
+        brief_goal = _get_field(scene_brief, "goal", "")
+        brief_characters = _get_field(scene_brief, "characters", [])
+        brief_timeline = _get_field(scene_brief, "timeline_context", {})
+        brief_constraints = _get_field(scene_brief, "world_constraints", [])
+        brief_style = _get_field(scene_brief, "style_reminder", "")
+        brief_forbidden = _get_field(scene_brief, "forbidden", [])
 
         brief_text = f"""Scene Brief:
 Chapter: {brief_chapter}
@@ -375,57 +517,94 @@ FORBIDDEN:
 """
         context_items.append(brief_text)
 
+        if working_memory:
+            context_items.append("Working Memory:\n" + str(working_memory))
+
+        if unresolved_gaps:
+            lines = ["未解决缺口（不得编造，必须留白或用[TO_CONFIRM:…]标记）:"]
+            for gap in unresolved_gaps[:6]:
+                if not isinstance(gap, dict):
+                    continue
+                text = str(gap.get("text") or "").strip()
+                if text:
+                    lines.append(f"- {text}")
+            if len(lines) > 1:
+                context_items.append("\n".join(lines))
+
         if style_card:
             try:
                 context_items.append("Style Card:\n" + str(style_card.model_dump()))
             except Exception:
                 context_items.append("Style Card:\n" + str(style_card))
 
-
-        if character_cards:
-            lines = ["Character Cards:"]
-            for card in character_cards[:10]:
-                try:
-                    lines.append(str(card.model_dump()))
-                except Exception:
-                    lines.append(str(card))
+        if text_chunks:
+            lines = ["Text Chunks:"]
+            for chunk in text_chunks[:6]:
+                if isinstance(chunk, dict):
+                    chapter = chunk.get("chapter") or ""
+                    text = chunk.get("text") or ""
+                    prefix = f"[{chapter}] " if chapter else ""
+                    lines.append(prefix + text)
+                else:
+                    lines.append(str(chunk))
             context_items.append("\n".join(lines))
 
-        if world_cards:
-            lines = ["World Cards:"]
-            for card in world_cards[:10]:
-                try:
-                    lines.append(str(card.model_dump()))
-                except Exception:
-                    lines.append(str(card))
-            context_items.append("\n".join(lines))
+        if evidence_pack and isinstance(evidence_pack, dict):
+            items = evidence_pack.get("items") or []
+            if items:
+                lines = ["Evidence Pack:"]
+                for item in items[:12]:
+                    if not isinstance(item, dict):
+                        continue
+                    item_type = str(item.get("type") or "").strip()
+                    text = str(item.get("text") or item.get("statement") or "").strip()
+                    source = item.get("source") or {}
+                    chapter = str(source.get("chapter") or "").strip()
+                    prefix = f"[{item_type}]" if item_type else ""
+                    if chapter:
+                        prefix = f"{prefix}[{chapter}]" if prefix else f"[{chapter}]"
+                    line = f"{prefix} {text}".strip()
+                    if line:
+                        lines.append(line)
+                if len(lines) > 1:
+                    context_items.append("\n".join(lines))
 
-        if facts:
-            lines = ["Canon Facts:"]
-            for fact in facts[-20:]:
-                try:
-                    lines.append(str(fact.model_dump()))
-                except Exception:
-                    lines.append(str(fact))
-            context_items.append("\n".join(lines))
+        if not use_compact_context:
+            if character_cards:
+                lines = ["Character Cards:"]
+                for card in character_cards[:10]:
+                    try:
+                        lines.append(str(card.model_dump()))
+                    except Exception:
+                        lines.append(str(card))
+                context_items.append("\n".join(lines))
 
-        if timeline:
-            lines = ["Canon Timeline:"]
-            for item in timeline[-20:]:
-                try:
-                    lines.append(str(item.model_dump()))
-                except Exception:
-                    lines.append(str(item))
-            context_items.append("\n".join(lines))
+            if world_cards:
+                lines = ["World Cards:"]
+                for card in world_cards[:10]:
+                    try:
+                        lines.append(str(card.model_dump()))
+                    except Exception:
+                        lines.append(str(card))
+                context_items.append("\n".join(lines))
 
-        if character_states:
-            lines = ["Character States:"]
-            for state in character_states[:20]:
-                try:
-                    lines.append(str(state.model_dump()))
-                except Exception:
-                    lines.append(str(state))
-            context_items.append("\n".join(lines))
+            if facts and not (evidence_pack and evidence_pack.get("items")):
+                lines = ["Canon Facts:"]
+                for fact in facts[:20]:
+                    try:
+                        lines.append(str(fact.model_dump()))
+                    except Exception:
+                        lines.append(str(fact))
+                context_items.append("\n".join(lines))
+
+            if character_states:
+                lines = ["Character States:"]
+                for state in character_states[:20]:
+                    try:
+                        lines.append(str(state.model_dump()))
+                    except Exception:
+                        lines.append(str(state))
+                context_items.append("\n".join(lines))
 
         if user_answers:
             lines = ["User Answers:"]
@@ -444,35 +623,16 @@ FORBIDDEN:
 
         if previous_summaries:
             context_items.append("Previous Chapters:\n" + "\n\n".join(previous_summaries))
-
-        if include_plan:
-            user_prompt = f"""【必须遵守】严禁违背用户指令、事实摘要、禁忌；信息缺口用[TO_CONFIRM:细节]标记。
-章节目标（最高优先）：{chapter_goal or brief_goal}
-目标字数：约 {target_word_count} 字；严格遵守文风提醒与风格卡。
-
-输出格式（先计划后成文）：
-<plan>
-- 列出3-6个节拍，覆盖冲突、转折、情绪推进，确保达成章节目标
-</plan>
-<draft>
-叙事正文（中文），不要包含计划或任何额外说明
-</draft>
-"""
-            system_prompt = self.get_system_prompt()
-        else:
-            user_prompt = f"""【必须遵守】严禁违背用户指令、事实摘要、禁忌；信息缺口用[TO_CONFIRM:细节]标记。
-章节目标（最高优先）：{chapter_goal or brief_goal}
-目标字数：约 {target_word_count} 字；严格遵守文风提醒与风格卡。
-
-输出格式：仅输出叙事正文（中文），不得包含计划或额外标题。
-"""
-            system_prompt = (
-                "你是主笔，仅输出正文草稿；必须遵守事实摘要与禁忌，禁止新增设定。"
-            )
+        prompt = writer_draft_prompt(
+            include_plan=include_plan,
+            chapter_goal=chapter_goal or "",
+            brief_goal=brief_goal or "",
+            target_word_count=target_word_count,
+        )
 
         return self.build_messages(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
             context_items=context_items,
         )
 
@@ -498,6 +658,18 @@ FORBIDDEN:
         return "\n".join([f"- {item}" for item in items])
 
     def _extract_confirmations(self, content: str) -> List[str]:
+        """
+        从生成内容中提取待确认项 - 查找 [TO_CONFIRM:...] 标记
+
+        Extract [TO_CONFIRM:...] markers from draft content for user review.
+        These mark uncertain facts that require user confirmation.
+
+        Args:
+            content: Generated draft text.
+
+        Returns:
+            List of confirmation texts (content between [TO_CONFIRM: and ]).
+        """
         confirmations = []
         for line in content.split("\n"):
             if "[TO_CONFIRM:" in line:
@@ -506,3 +678,4 @@ FORBIDDEN:
                 if end > start:
                     confirmations.append(line[start:end].strip())
         return confirmations
+

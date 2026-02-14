@@ -10,6 +10,9 @@ from enum import Enum
 from datetime import datetime
 import asyncio
 import json
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class TraceEventType(str, Enum):
@@ -450,7 +453,7 @@ class TraceCollector:
                 else:
                     subscriber(event)
             except Exception as e:
-                print(f"Subscriber error: {e}")
+                logger.warning("Subscriber error: %s", e)
     
     # ========== 查询方法 ==========
     

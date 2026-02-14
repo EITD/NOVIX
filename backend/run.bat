@@ -1,11 +1,11 @@
 @echo off
-REM NOVIX Backend Startup Script for Windows
+REM WenShape Backend Startup Script for Windows
 
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 
 echo ========================================
-echo   NOVIX Backend Server
+echo   WenShape Backend Server
 echo ========================================
 echo.
 
@@ -40,7 +40,7 @@ if not exist ".env" (
     echo [!] .env file not found. Copying from .env.example...
     copy .env.example .env >nul
     echo [!] Please edit .env file and add your API keys!
-    echo     Or use NOVIX_LLM_PROVIDER=mock for demo mode.
+    echo     Or use WENSHAPE_LLM_PROVIDER=mock for demo mode.
     echo.
     pause
 )
@@ -49,12 +49,17 @@ REM Start server
 echo.
 echo [2/3] Starting server...
 echo.
-echo   Frontend: http://localhost:3000
-echo   Backend:  http://localhost:8000
-echo   API Docs: http://localhost:8000/docs
+if "%PORT%"=="" set "PORT=%WENSHAPE_BACKEND_PORT%"
+if "%PORT%"=="" set "PORT=8000"
+if "%VITE_DEV_PORT%"=="" set "VITE_DEV_PORT=%WENSHAPE_FRONTEND_PORT%"
+if "%VITE_DEV_PORT%"=="" set "VITE_DEV_PORT=3000"
+echo   Frontend: http://localhost:%VITE_DEV_PORT%
+echo   Backend:  http://localhost:%PORT%
+echo   API Docs: http://localhost:%PORT%/docs
 echo.
 
 echo [3/3] Server running...
+if "%WENSHAPE_AUTO_PORT%"=="" set "WENSHAPE_AUTO_PORT=1"
 python -m app.main
 
 pause

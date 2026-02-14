@@ -1,9 +1,9 @@
 @echo off
-REM NOVIX Project Cleanup Script
+REM WenShape Project Cleanup Script
 REM 清理项目冗余文件
 
 echo ========================================
-echo   NOVIX 项目清理工具
+echo   WenShape 项目清理工具
 echo ========================================
 echo.
 

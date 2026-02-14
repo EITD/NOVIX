@@ -1,4 +1,4 @@
-﻿"""
+"""
 WebSocket Router
 Real-time progress updates for writing sessions.
 """
@@ -107,7 +107,7 @@ async def trace_websocket_endpoint(websocket: WebSocket):
     try:
         await websocket.send_json({
             "type": "connected",
-            "message": "Connected to NOVIX Trace System",
+            "message": "Connected to WenShape Trace System",
         })
 
         for trace in trace_collector.get_all_traces():
@@ -125,7 +125,7 @@ async def trace_websocket_endpoint(websocket: WebSocket):
         trace_manager.disconnect(websocket)
         trace_collector.unsubscribe(on_trace_event)
     except Exception as exc:
-        logger.error(f"Trace WebSocket error: {exc}", exc_info=True)
+        logger.error("Trace WebSocket error: %s", exc, exc_info=True)
         trace_manager.disconnect(websocket)
         trace_collector.unsubscribe(on_trace_event)
 
@@ -138,7 +138,7 @@ async def websocket_endpoint(websocket: WebSocket, project_id: str):
     try:
         await websocket.send_json({
             "type": "connected",
-            "message": "Connected to NOVIX session updates",
+            "message": "Connected to WenShape session updates",
             "project_id": project_id,
         })
 
@@ -152,7 +152,7 @@ async def websocket_endpoint(websocket: WebSocket, project_id: str):
     except WebSocketDisconnect:
         manager.disconnect(websocket, project_id)
     except Exception as exc:
-        logger.error(f"WebSocket error: {exc}", exc_info=True)
+        logger.error("WebSocket error: %s", exc, exc_info=True)
         manager.disconnect(websocket, project_id)
 
 

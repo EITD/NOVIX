@@ -7,6 +7,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 from openai import AsyncOpenAI
+from anthropic import AsyncAnthropic
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/proxy", tags=["proxy"])
 
@@ -15,41 +19,81 @@ class FetchModelsRequest(BaseModel):
     api_key: str
     base_url: Optional[str] = None
 
+
+ANTHROPIC_FALLBACK_MODELS: List[str] = [
+    # 用于“拉取模型列表”失败时的兜底；保持小而稳定，避免 UI 无法继续配置。
+    "claude-opus-4-6",
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku-20241022",
+    "claude-3-opus-20240229",
+    "claude-3-sonnet-20240229",
+    "claude-3-haiku-20240307",
+]
+
 @router.post("/fetch-models")
 async def fetch_models(request: FetchModelsRequest):
     """
     Fetch available models from the provider
     """
     try:
+        provider = str(request.provider or "").strip().lower()
+        base_url = (request.base_url or "").strip() or None
+
+        # Anthropic: 使用官方 SDK 的 Models API（而不是 OpenAI 兼容的 /v1/models）。
+        # 注意：无论成功/失败都要 return，避免 fallthrough 到 OpenAI 客户端导致 400（前端误以为“拉取失败”）。
+        if provider == "anthropic":
+            try:
+                logger.debug("Fetch Models Debug: Provider=anthropic, BaseURL=%s", base_url or "(default)")
+                if base_url:
+                    client = AsyncAnthropic(api_key=request.api_key, base_url=base_url)
+                else:
+                    client = AsyncAnthropic(api_key=request.api_key)
+
+                paginator = client.models.list(limit=200)
+                model_ids: List[str] = []
+                async for model in paginator:
+                    model_id = getattr(model, "id", None)
+                    if model_id:
+                        model_ids.append(str(model_id))
+                    if len(model_ids) >= 200:
+                        break
+
+                if model_ids:
+                    logger.info("Fetch Models Success: Found %s models (anthropic)", len(model_ids))
+                    return {"models": sorted(set(model_ids))}
+
+                logger.warning("Fetch Models Warning (anthropic): empty models list")
+                return {
+                    "models": ANTHROPIC_FALLBACK_MODELS,
+                    "warning": "Anthropic 模型列表为空，已返回内置候选列表（实际可用性以真实调用为准）。",
+                }
+            except Exception as e:
+                logger.warning("Fetch Models Error (anthropic): %s", str(e))
+                return {
+                    "models": ANTHROPIC_FALLBACK_MODELS,
+                    "warning": f"Anthropic 模型列表拉取失败，已返回内置候选列表。原因：{str(e)}",
+                }
+
         # Determine base URL based on provider if not provided
-        base_url = request.base_url
         if not base_url:
-            if request.provider == "openai":
-                base_url = None # Default
-            elif request.provider == "anthropic":
-                # Anthropic direct fetch might differ, but if using openai-compatible adapter:
-                # Actually, our AnthropicProvider uses special adapter? 
-                # For fetching models via OpenAI SDK, provider must support OpenAI API
-                # Most custom providers do. Official Anthropic API is different.
-                # If provider is anthropic, we might fail if trying to use OpenAI SDK unless we use a bridge.
-                # For now, let's assume OpenAI-compatible providers or custom base_url.
-                pass
-            elif request.provider == "deepseek":
+            if provider == "openai":
+                base_url = None  # Default
+            elif provider == "deepseek":
                 base_url = "https://api.deepseek.com/v1"
-            elif request.provider == "qwen":
+            elif provider == "qwen":
                 base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-            elif request.provider == "kimi":
+            elif provider == "kimi":
                 base_url = "https://api.moonshot.cn/v1"
-            elif request.provider == "glm":
+            elif provider == "glm":
                 base_url = "https://open.bigmodel.cn/api/paas/v4"
-            elif request.provider == "gemini":
+            elif provider == "gemini":
                 base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-            elif request.provider == "grok":
+            elif provider == "grok":
                 base_url = "https://api.x.ai/v1"
         
         # Initialize temp client
         # Note: Some providers might not implement /v1/models correctly.
-        print(f"Fetch Models Debug: Provider={request.provider}, BaseURL={base_url}, Key={request.api_key[:8]}***")
+        logger.debug("Fetch Models Debug: Provider=%s, BaseURL=%s", provider, base_url)
         
         client = AsyncOpenAI(
             api_key=request.api_key,
@@ -60,9 +104,9 @@ async def fetch_models(request: FetchModelsRequest):
         
         # Extract model IDs
         model_ids = [m.id for m in models_response.data]
-        print(f"Fetch Models Success: Found {len(model_ids)} models")
+        logger.info("Fetch Models Success: Found %s models", len(model_ids))
         return {"models": sorted(model_ids)}
         
     except Exception as e:
-        print(f"Fetch Models Error: {str(e)}")
+        logger.warning("Fetch Models Error: %s", str(e))
         raise HTTPException(status_code=400, detail=str(e))

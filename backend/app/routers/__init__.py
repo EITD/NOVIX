@@ -10,6 +10,10 @@ from .drafts import router as drafts_router
 from .session import router as session_router
 from .config_llm import router as config_router
 from .proxy import router as proxy_router
+from .text_chunks import router as text_chunks_router
+from .evidence import router as evidence_router
+from .bindings import router as bindings_router
+from .memory_pack import router as memory_pack_router
 
 __all__ = [
     "projects_router",
@@ -20,4 +24,8 @@ __all__ = [
     "session_router",
     "config_router",
     "proxy_router",
+    "text_chunks_router",
+    "evidence_router",
+    "bindings_router",
+    "memory_pack_router",
 ]

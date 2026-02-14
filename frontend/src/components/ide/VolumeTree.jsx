@@ -1,202 +1,329 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import useSWR from 'swr';
-import { ChevronDown, ChevronRight, FolderOpen } from 'lucide-react';
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   分卷树视图 - IDE 资源管理器中的分卷和章节树，支持树形导航和重排
+ *   Volume tree view for IDE explorer showing volumes and chapters with reordering.
+ */
+
+/**
+ * 分卷树组件 - IDE 资源管理器中的分卷和章节树形结构
+ *
+ * IDE explorer tree component displaying project volumes and chapters in hierarchical view.
+ * Only handles list presentation and interaction triggering, preserving data structure
+ * and business logic. Implements "Calm & Focus" design language with:
+ * - High density: unified line height
+ * - Low noise: subtle decorations
+ * - Clear hierarchy: indentation and light indicators
+ *
+ * @component
+ * @example
+ * return (
+ *   <VolumeTree
+ *     projectId="proj-001"
+ *     onChapterSelect={handleSelect}
+ *     selectedChapter="ch001"
+ *     reorderMode={false}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {string} [props.projectId] - 项目ID / Project identifier
+ * @param {Function} [props.onChapterSelect] - 章节选择回调 / Chapter selection callback
+ * @param {string} [props.selectedChapter] - 当前选中章节 / Currently selected chapter
+ * @param {boolean} [props.reorderMode=false] - 是否处于重排模式 / Whether in reorder mode
+ * @returns {JSX.Element} 分卷树元素 / Volume tree element
+ */
+import { useEffect, useMemo, useState } from 'react';
+import useSWR, { mutate } from 'swr';
+import { ChevronRight, ChevronDown, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { draftsAPI, volumesAPI } from '../../api';
 import { useIDE } from '../../context/IDEContext';
 import { cn } from '../ui/core';
 
-/**
- * VolumeTree - 分卷/章节树
- */
-const VolumeTree = ({ projectId, onChapterSelect, selectedChapter }) => {
+export default function VolumeTree({ projectId, onChapterSelect, selectedChapter, reorderMode = false }) {
   const { state, dispatch } = useIDE();
+
+  // 数据获取
+  const { data: volumesData } = useSWR(
+    projectId ? `/volumes/${projectId}` : null,
+    () => volumesAPI.list(projectId).then(res => res.data),
+    { refreshInterval: 5000 } // 轮询更新
+  );
+
+  const { data: chaptersData } = useSWR(
+    projectId ? `/drafts/${projectId}/chapters` : null,
+    () => draftsAPI.listChapters(projectId).then(res => res.data),
+    { refreshInterval: 5000 }
+  );
+
+  const { data: summariesData } = useSWR(
+    projectId ? `/drafts/${projectId}/summaries` : null,
+    () => draftsAPI.listSummaries(projectId).then(res => res.data)
+  );
+
+  // 状态
   const [expandedVolumes, setExpandedVolumes] = useState(new Set());
 
-  const { data: volumes = [], isLoading: volumesLoading } = useSWR(
-    projectId ? [projectId, 'volumes'] : null,
-    () => volumesAPI.list(projectId).then((res) => res.data),
-    { revalidateOnFocus: false }
-  );
+  // 数据处理
+  const volumeList = useMemo(() => {
+    return Array.isArray(volumesData) ? volumesData : [];
+  }, [volumesData]);
 
-  const { data: summaries = [], isLoading: summariesLoading } = useSWR(
-    projectId ? [projectId, 'chapter-summaries'] : null,
-    () => draftsAPI.listSummaries(projectId).then((res) => res.data),
-    { revalidateOnFocus: false }
-  );
+  const chaptersByVolume = useMemo(() => {
+    if (!Array.isArray(chaptersData)) return {};
 
-  const { data: chapters = [], isLoading: chaptersLoading } = useSWR(
-    projectId ? [projectId, 'chapters'] : null,
-    () => draftsAPI.listChapters(projectId).then((res) => res.data || []),
-    { revalidateOnFocus: false }
-  );
-
-  const getChapterWeight = (chapterId) => {
-    const normalized = (chapterId || '').toUpperCase();
-    const match = normalized.match(/^(?:V(\d+))?C(\d+)(?:([EI])(\d+))?$/);
-    if (!match) return 0;
-    const volume = match[1] ? Number.parseInt(match[1], 10) : 0;
-    const chapter = Number.parseInt(match[2], 10);
-    const type = match[3];
-    const seq = match[4] ? Number.parseInt(match[4], 10) : 0;
-    let weight = volume * 1000 + chapter;
-    if (type && seq) {
-      weight += 0.1 * seq;
+    // 将摘要映射为标题
+    const summaryMap = {};
+    if (Array.isArray(summariesData)) {
+      summariesData.forEach(s => {
+        if (s.chapter) summaryMap[s.chapter] = s;
+      });
     }
-    return weight;
-  };
 
-  const { volumeList, chaptersByVolume } = useMemo(() => {
     const grouped = {};
-    volumes.forEach((volume) => {
-      grouped[volume.id] = [];
-    });
 
-    const summaryMap = new Map();
-    summaries.forEach((summary) => summaryMap.set(summary.chapter, summary));
-    const chapterSet = new Set(chapters);
+    // 解析分卷 ID 的辅助函数
+    const getVolumeId = (chapterId, summary) => {
+      if (summary?.volume_id) return summary.volume_id;
+      const match = chapterId.match(/^V(\d+)/i);
+      return match ? `V${match[1]}` : 'V1';
+    };
 
-    const normalizedChapters = chapters.map((chapterId) => {
-      const summary = summaryMap.get(chapterId);
-      if (summary) {
-        return summary;
-      }
-      const volumeMatch = chapterId.match(/^V(\d+)/i);
-      const volumeId = volumeMatch ? `V${volumeMatch[1]}` : 'V1';
-      return {
+    chaptersData.forEach(chapterId => {
+      const summary = summaryMap[chapterId];
+      const volId = getVolumeId(chapterId, summary);
+
+      if (!grouped[volId]) grouped[volId] = [];
+
+      grouped[volId].push({
         chapter: chapterId,
-        title: chapterId,
-        word_count: 0,
-        volume_id: volumeId,
-      };
+        title: summary?.title || '',
+        word_count: summary?.word_count || 0,
+        order_index: typeof summary?.order_index === 'number' ? summary.order_index : null,
+        // 需要时可增加排序权重
+      });
     });
 
-    summaries.forEach((summary) => {
-      if (!chapterSet.has(summary.chapter)) {
-        normalizedChapters.push(summary);
-      }
+    // 分卷内章节排序：优先使用 order_index（用户自定义），否则回退到章节号排序。
+    Object.keys(grouped).forEach(key => {
+      grouped[key].sort((a, b) => {
+        const aOrder = typeof a.order_index === 'number' ? a.order_index : Number.POSITIVE_INFINITY;
+        const bOrder = typeof b.order_index === 'number' ? b.order_index : Number.POSITIVE_INFINITY;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return a.chapter.localeCompare(b.chapter, undefined, { numeric: true });
+      });
     });
 
-    normalizedChapters.forEach((summary) => {
-      const volumeId = summary.volume_id || 'V1';
-      if (!grouped[volumeId]) {
-        grouped[volumeId] = [];
-      }
-      grouped[volumeId].push(summary);
-    });
+    return grouped;
+  }, [chaptersData, summariesData]);
 
-    Object.keys(grouped).forEach((volumeId) => {
-      grouped[volumeId].sort((a, b) => getChapterWeight(a.chapter) - getChapterWeight(b.chapter));
-    });
-
-    const list = [...volumes];
-    list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    return { volumeList: list, chaptersByVolume: grouped };
-  }, [volumes, summaries, chapters]);
-
+  // 副作用
   useEffect(() => {
-    if (!volumeList.length) {
-      return;
+    // 选中章节时自动展开所在分卷
+    if (selectedChapter) {
+      const match = selectedChapter.match(/^V(\d+)/i);
+      const volId = match ? `V${match[1]}` : 'V1'; // 简化推断
+      // 如需更准确可利用章节 -> 分卷映射
+      // 当前确保选中章节所在分卷展开
+      setExpandedVolumes(prev => {
+        const next = new Set(prev);
+        next.add(volId);
+        return next;
+      });
     }
-    if (!state.selectedVolumeId || !volumeList.find((item) => item.id === state.selectedVolumeId)) {
-      dispatch({ type: 'SET_SELECTED_VOLUME_ID', payload: volumeList[0].id });
-    }
-  }, [dispatch, state.selectedVolumeId, volumeList]);
+  }, [selectedChapter]);
 
-  const toggleVolume = (volumeId) => {
-    const next = new Set(expandedVolumes);
-    if (next.has(volumeId)) {
-      next.delete(volumeId);
-    } else {
-      next.add(volumeId);
-    }
-    setExpandedVolumes(next);
-    dispatch({ type: 'SET_SELECTED_VOLUME_ID', payload: volumeId });
+  // 事件处理
+  const toggleVolume = (volId) => {
+    setExpandedVolumes(prev => {
+      const next = new Set(prev);
+      if (next.has(volId)) next.delete(volId);
+      else next.add(volId);
+      return next;
+    });
   };
 
-  if (volumesLoading || summariesLoading || chaptersLoading) {
-    return <div className="px-3 py-4 text-xs text-ink-400">加载章节中...</div>;
-  }
+  const handleDeleteChapter = async (chapterId, title) => {
+    if (!projectId || !chapterId) return;
+    const isActive = state.activeDocument?.type === 'chapter' && String(state.activeDocument?.id) === String(chapterId);
+    const hasUnsaved = Boolean(state.unsavedChanges) && isActive;
+    const displayTitle = title ? `（${title}）` : '';
+    const extraWarn = hasUnsaved ? '\n\n注意：当前章节存在未保存内容，删除后将永久丢失。' : '';
+
+    const ok = window.confirm(`确定要删除章节 ${chapterId}${displayTitle} 吗？此操作不可撤销。${extraWarn}`);
+    if (!ok) return;
+
+    try {
+      await draftsAPI.deleteChapter(projectId, chapterId);
+      if (isActive) {
+        dispatch({ type: 'SET_ACTIVE_DOCUMENT', payload: null });
+      }
+      await mutate(`/drafts/${projectId}/chapters`);
+      await mutate(`/drafts/${projectId}/summaries`);
+    } catch (e) {
+      window.alert('删除失败：' + (e?.message || '未知错误'));
+    }
+  };
+
+  const handleReorderChapter = async (volumeId, chapterIndex, direction) => {
+    if (!projectId) return;
+    const list = chaptersByVolume?.[volumeId] || [];
+    if (!Array.isArray(list) || list.length < 2) return;
+
+    const delta = direction === 'up' ? -1 : 1;
+    const nextIndex = chapterIndex + delta;
+    if (nextIndex < 0 || nextIndex >= list.length) return;
+
+    const reordered = list.slice();
+    const tmp = reordered[chapterIndex];
+    reordered[chapterIndex] = reordered[nextIndex];
+    reordered[nextIndex] = tmp;
+
+    try {
+      await draftsAPI.reorderChapters(projectId, {
+        volume_id: volumeId,
+        chapter_order: reordered.map((item) => item.chapter),
+      });
+      await mutate(`/drafts/${projectId}/chapters`);
+      await mutate(`/drafts/${projectId}/summaries`);
+    } catch (e) {
+      window.alert('调整顺序失败：' + (e?.response?.data?.detail || e?.message || '未知错误'));
+    }
+  };
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between px-1">
-        <div className="text-xs font-bold text-ink-500 uppercase tracking-wider">章节</div>
-      </div>
+    <div className="w-full text-[13px] font-sans text-[var(--vscode-fg)] select-none">
+      {/* 分卷列表 */}
+      {volumeList.map(volume => {
+        const isExpanded = expandedVolumes.has(volume.id);
+        const isSelected = state.selectedVolumeId === volume.id; // 分卷选中逻辑（如有）
+        const chapters = chaptersByVolume[volume.id] || [];
 
-      <div className="space-y-2">
-        {volumeList.length === 0 ? (
-          <div className="p-4 text-center text-xs text-ink-400 border border-dashed border-border rounded">
-            暂无分卷
-          </div>
-        ) : (
-          volumeList.map((volume) => {
-            const isExpanded = expandedVolumes.has(volume.id);
-            const isSelected = state.selectedVolumeId === volume.id;
-            const chaptersForVolume = chaptersByVolume[volume.id] || [];
+        return (
+          <div key={volume.id}>
+            {/* 分卷标题行 */}
+            <div
+              className={cn(
+                "vscode-tree-item font-bold flex items-center gap-0.5",
+                isSelected && "selected" // 可选：分卷可选中
+              )}
+              onClick={(e) => {
+                toggleVolume(volume.id);
+                // 可选：派发分卷选择
+                dispatch({ type: 'SET_SELECTED_VOLUME_ID', payload: volume.id });
+              }}
+            >
+              <span className="flex items-center justify-center w-5 h-5 opacity-70">
+                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </span>
+              <span className="truncate">{volume.title}</span>
+            </div>
 
-            return (
-              <div
-                key={volume.id}
-                className={cn(
-                  'border rounded bg-surface',
-                  isSelected ? 'border-primary/50 shadow-sm' : 'border-border'
-                )}
-              >
-                <button
-                  className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 text-left transition-colors',
-                    isSelected ? 'bg-primary/5' : 'hover:bg-ink-50'
-                  )}
-                  onClick={() => toggleVolume(volume.id)}
-                >
-                  {isExpanded ? (
-                    <ChevronDown size={14} className="text-ink-400" />
-                  ) : (
-                    <ChevronRight size={14} className="text-ink-400" />
-                  )}
-                  <FolderOpen size={14} className="text-primary" />
-                  <span className="text-[10px] font-mono text-primary">{volume.id}</span>
-                  <span className="text-xs text-ink-800 truncate flex-1">{volume.title}</span>
-                  <span className="text-[10px] text-ink-400">{chaptersForVolume.length}</span>
-                </button>
+            {/* 章节列表（展开时渲染，不加动画） */}
+            {isExpanded && (
+              <div className="relative">
+                {chapters.map((chapter, idx) => {
+                  const isChapterSelected = selectedChapter === chapter.chapter;
 
-                {isExpanded && (
-                  <div className="border-t border-border/70 bg-ink-50/40">
-                    {chaptersForVolume.length ? (
-                      chaptersForVolume.map((chapter) => (
-                        <button
-                          key={chapter.chapter}
-                          className={cn(
-                            'w-full flex items-center gap-2 px-4 py-2 text-left text-xs transition-colors border-l-2',
-                            selectedChapter === chapter.chapter
-                              ? 'bg-primary/10 border-primary text-primary'
-                              : 'border-transparent hover:bg-ink-100 text-ink-700'
-                          )}
-                          onClick={() => onChapterSelect?.(chapter)}
-                        >
-                          <span className="font-mono text-[10px]">{chapter.chapter}</span>
-                          <span className="truncate flex-1">
-                            {chapter.title || chapter.chapter}
-                          </span>
-                          {chapter.word_count ? (
-                            <span className="text-[10px] text-ink-400">
-                              {chapter.word_count} 字
-                            </span>
-                          ) : null}
-                        </button>
-                      ))
-                    ) : (
-                      <div className="px-4 py-3 text-xs text-ink-400">暂无章节</div>
-                    )}
+                  return (
+                    <div
+                      key={chapter.chapter}
+                      className={cn(
+                        "vscode-tree-item pl-8 gap-2 relative group", // 缩进：20px 图标 + 12px，相对定位便于层级控制
+                        isChapterSelected && "selected"
+                      )}
+                      onClick={() => {
+                        onChapterSelect({ id: chapter.chapter, title: chapter.title });
+                      }}
+                      title={chapter.title}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <span className="truncate flex-1">
+                        <span className="opacity-70 font-mono text-xs mr-2">{chapter.chapter}</span>
+                        {chapter.title || '未命名'}
+                      </span>
+
+                      {/* 右侧元信息 */}
+                      {chapter.word_count > 0 && (
+                        <span className="text-[10px] opacity-40 font-mono pr-1">{chapter.word_count}</span>
+                      )}
+
+                      {reorderMode ? (
+                        <>
+                          <button
+                            type="button"
+                            title="上移"
+                            aria-label="上移"
+                            disabled={idx === 0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleReorderChapter(volume.id, idx, 'up');
+                            }}
+                            className={cn(
+                              "p-1 rounded-[2px] hover:bg-[var(--vscode-list-hover)] transition-none outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)]",
+                              "text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]",
+                              "opacity-80 hover:opacity-100 disabled:opacity-20 disabled:pointer-events-none"
+                            )}
+                          >
+                            <ArrowUp size={14} strokeWidth={1.5} />
+                          </button>
+
+                          <button
+                            type="button"
+                            title="下移"
+                            aria-label="下移"
+                            disabled={idx === chapters.length - 1}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleReorderChapter(volume.id, idx, 'down');
+                            }}
+                            className={cn(
+                              "p-1 rounded-[2px] hover:bg-[var(--vscode-list-hover)] transition-none outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)]",
+                              "text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]",
+                              "opacity-80 hover:opacity-100 disabled:opacity-20 disabled:pointer-events-none"
+                            )}
+                          >
+                            <ArrowDown size={14} strokeWidth={1.5} />
+                          </button>
+                        </>
+                      ) : null}
+
+                      <button
+                        type="button"
+                        title="删除章节"
+                        aria-label="删除章节"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteChapter(chapter.chapter, chapter.title);
+                        }}
+                        className={cn(
+                          "p-1 rounded-[2px] hover:bg-[var(--vscode-list-hover)] transition-none outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)]",
+                          "text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]",
+                          "opacity-0 group-hover:opacity-80 hover:opacity-100"
+                        )}
+                      >
+                        <Trash2 size={14} strokeWidth={1.5} />
+                      </button>
+                    </div>
+                  );
+                })}
+
+                {/* 分卷空状态 */}
+                {chapters.length === 0 && (
+                  <div className="vscode-tree-item pl-8 text-xs opacity-40 italic cursor-default hover:bg-transparent">
+                    暂无章节
                   </div>
                 )}
               </div>
-            );
-          })
-        )}
-      </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
-};
-
-export default VolumeTree;
+}

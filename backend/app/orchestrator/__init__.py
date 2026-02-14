@@ -5,5 +5,6 @@ Coordinates multi-agent workflow for chapter writing
 """
 
 from .orchestrator import Orchestrator
+from ._types import SessionStatus
 
-__all__ = ["Orchestrator"]
+__all__ = ["Orchestrator", "SessionStatus"]

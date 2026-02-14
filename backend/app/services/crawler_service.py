@@ -1,8 +1,14 @@
-﻿"""
-Crawler Service for Fanfiction Feature
-Scrapes Wiki pages and extracts content using multiple strategies:
-1. MediaWiki API (parse action)
-2. Direct HTML scraping (fallback)
+# -*- coding: utf-8 -*-
+"""
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  爬虫服务 - 支持多个 Wiki 平台（萌娘百科、Fandom、Wikipedia）的页面内容爬取和解析。
+  Crawler service - Scrapes Wiki pages from multiple platforms using MediaWiki APIs and HTML fallbacks with intelligent link extraction.
 """
 
 import asyncio
@@ -23,11 +29,26 @@ logger = get_logger(__name__)
 
 
 class CrawlerService:
-    """Service for scraping Wiki pages"""
+    """
+    Wiki 页面爬虫服务。
+
+    Service for scraping Wiki pages with support for multiple platforms (Moegirlpedia, Fandom, Wikipedia).
+    Uses MediaWiki API for reliable extraction when available, with HTML scraping fallbacks.
+    Implements intelligent link extraction to avoid noise and over-inclusion of navigation links.
+
+    Attributes:
+        MAX_PREVIEW_CHARS: 预览文本最大字符数 (Max characters for preview)
+        MAX_LLM_CHARS: LLM 处理的最大字符数 (Max characters for LLM input)
+        MAX_LINKS: 通用最大链接数 (Max links for generic sites)
+        MOEGIRL_MAX_LINKS: 萌娘百科特定最大链接数 (Moegirl-specific max links)
+    """
 
     MAX_PREVIEW_CHARS = 1200
     MAX_LLM_CHARS = 50000
     MAX_LINKS = 400
+    MOEGIRL_MAX_LINKS = 900
+    MOEGIRL_API_PRIMARY = "https://mzh.moegirl.org.cn/api.php"
+    MOEGIRL_API_FALLBACK = "https://zh.moegirl.org.cn/api.php"
 
     def __init__(self):
         self.headers = {
@@ -41,8 +62,8 @@ class CrawlerService:
         self.session.headers.update(self.headers)
 
         retry = Retry(
-            total=2,
-            backoff_factor=0.5,
+            total=4,
+            backoff_factor=0.6,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
         )
@@ -62,7 +83,7 @@ class CrawlerService:
             if "fandom.com" in domain:
                 result = self._scrape_mediawiki_parse(url, parsed)
             elif "moegirl.org" in domain:
-                result = self._scrape_mediawiki_parse(url, parsed)
+                result = self._scrape_moegirl(url, parsed)
             elif "wikipedia.org" in domain:
                 result = self._scrape_wikipedia(url, parsed)
             elif "huijiwiki.com" in domain or "wiki" in domain:
@@ -89,6 +110,539 @@ class CrawlerService:
                 "links": [],
                 "llm_content": "",
             }
+
+    def _normalize_url(self, url: str) -> str:
+        if not url:
+            return ""
+        normalized, _ = urldefrag(url.strip())
+        return normalized
+
+    def _is_moegirl_domain(self, netloc: str) -> bool:
+        host = (netloc or "").lower()
+        return "moegirl.org" in host or "moegirl.org.cn" in host
+
+    def _moegirl_article_title_from_url(self, parsed) -> Optional[str]:
+        query_params = parse_qs(parsed.query or "")
+        title = query_params.get("title", [None])[0]
+        if title:
+            return unquote(title).strip() or None
+        # Some MediaWiki links use page id instead of title (e.g. `?curid=123`).
+        # We can't resolve it without another API call; caller should fall back to anchor attributes.
+        if query_params.get("curid", [None])[0]:
+            return None
+        # Common format: /<Title> or /wiki/<Title>
+        path_parts = parsed.path.strip("/").split("/")
+        if not path_parts or not path_parts[0]:
+            return None
+        if path_parts[0] == "wiki" and len(path_parts) > 1:
+            return unquote("/".join(path_parts[1:])).strip() or None
+        if path_parts[0] in {"api.php", "index.php"}:
+            return None
+        return unquote(parsed.path.strip("/")).strip() or None
+
+    def _build_moegirl_page_url(self, title: str) -> str:
+        safe = quote(str(title or "").replace(" ", "_"), safe="")
+        return f"https://mzh.moegirl.org.cn/index.php?title={safe}"
+
+    def _is_mediawiki_namespace_title(self, title: str) -> bool:
+        """Filter out non-article namespaces (Category/File/Special/模板/分类等)."""
+        t = str(title or "").strip()
+        if not t or ":" not in t:
+            return False
+        prefix = t.split(":", 1)[0].strip().lower()
+        # EN namespaces
+        if prefix in {"special", "file", "talk", "template", "user", "help", "category", "module", "mediawiki"}:
+            return True
+        # CN namespaces
+        if prefix in {"特殊", "文件", "讨论", "模板", "用户", "帮助", "分类", "模块", "媒体维基"}:
+            return True
+        return False
+
+    def _extract_moegirl_list_links_from_html(
+        self,
+        content_root: BeautifulSoup,
+        base_url: str,
+    ) -> List[Dict[str, str]]:
+        """
+        Extract “list-like” links from <li> anchors.
+
+        目的：萌娘百科普通词条往往含大量普通链接（正文引用/跳转），直接返回会导致前端“子页面选择”误触发，
+        并显著拖慢渲染。我们优先从列表项链接中抽取更像“可批量导入的子词条”的候选集合。
+        """
+        links: List[Dict[str, str]] = []
+        seen = set()
+
+        if not content_root:
+            return links
+
+        for a in content_root.select("li a[href]")[: self.MOEGIRL_MAX_LINKS * 10]:
+            href = str(a.get("href") or "").strip()
+            if not href or href.startswith("#"):
+                continue
+            abs_url = self._normalize_url(urljoin(base_url, href))
+            if not abs_url:
+                continue
+
+            parsed = urlparse(abs_url)
+            if not self._is_moegirl_domain(parsed.netloc):
+                continue
+
+            title = self._moegirl_article_title_from_url(parsed)
+            if not title or self._is_mediawiki_namespace_title(title):
+                continue
+
+            final_url = self._build_moegirl_page_url(title)
+            if final_url in seen:
+                continue
+            seen.add(final_url)
+            links.append({"title": title, "url": final_url})
+            if len(links) >= self.MOEGIRL_MAX_LINKS:
+                break
+
+        return links
+
+    def _extract_moegirl_outgoing_links_from_html(
+        self,
+        content_root: BeautifulSoup,
+        base_url: str,
+        cap: int,
+    ) -> List[Dict[str, str]]:
+        """
+        Extract *all* outgoing wiki entry links that appear on the page (as anchors).
+
+        用户预期：页面里“提及并带链接”的所有词条都应当出现在子词条列表中。
+        因此这里不依赖 a 的可见文本（可能为空/缩写/图片链接），而是直接解析 href 还原目标词条标题。
+
+        重要：这里的“提及”指正文/信息框/列表/表格/标题等内容结构中的链接，不包含导航模板、目录、分类、参考文献等模板区块链接。
+        """
+        if not content_root:
+            return []
+
+        links: List[Dict[str, str]] = []
+        seen = set()
+
+        def is_noise_anchor(anchor) -> bool:
+            classes = anchor.get("class") or []
+            if isinstance(classes, str):
+                classes = [classes]
+            cls_join = " ".join([str(c) for c in classes]).lower()
+            # Red links / non-existing pages
+            if "new" in cls_join:
+                return True
+            # External links within the page content
+            if "external" in cls_join:
+                return True
+
+            # Drop anchors inside heavy template/navigation blocks that bring unrelated pages.
+            noise_class_patterns = [
+                "navbox",
+                "vertical-navbox",
+                "toc",
+                "catlinks",
+                "mw-references-wrap",
+                "reference",
+                "reflist",
+                "metadata",
+                "ambox",
+                "sistersitebox",
+                "noprint",
+                "portal",
+            ]
+            for parent in anchor.parents:
+                if getattr(parent, "name", None) is None:
+                    continue
+                if parent.name in {"nav", "footer"}:
+                    return True
+                if parent.get("role") == "navigation":
+                    return True
+                pcls = parent.get("class") or []
+                if isinstance(pcls, str):
+                    pcls = [pcls]
+                pcls_join = " ".join([str(c) for c in pcls]).lower()
+                if any(p in pcls_join for p in noise_class_patterns):
+                    return True
+            return False
+
+        def signal_score(anchor) -> int:
+            """
+            Score anchors by whether they appear in main text/table/list structures.
+            Higher score = more likely the page "mentions" this term.
+            """
+            for parent in anchor.parents:
+                if getattr(parent, "name", None) is None:
+                    continue
+                if parent.name == "table":
+                    return 3
+                if parent.name in {"p", "li", "dd", "dt", "h1", "h2", "h3", "h4", "h5", "h6"}:
+                    return 2
+                pcls = parent.get("class") or []
+                if isinstance(pcls, str):
+                    pcls = [pcls]
+                pcls_join = " ".join([str(c) for c in pcls]).lower()
+                if "infobox" in pcls_join or "wikitable" in pcls_join or "basic-info" in pcls_join:
+                    return 3
+            # Not in a "content mention" structure; treat as noise to avoid pulling global/site/template links.
+            return 0
+
+        candidates: List[Dict[str, Any]] = []
+        for a in content_root.find_all("a", href=True):
+            if is_noise_anchor(a):
+                continue
+            href = str(a.get("href") or "").strip()
+            if not href or href.startswith("#"):
+                continue
+            abs_url = self._normalize_url(urljoin(base_url, href))
+            if not abs_url:
+                continue
+
+            parsed = urlparse(abs_url)
+            if not self._is_moegirl_domain(parsed.netloc):
+                continue
+
+            title = self._moegirl_article_title_from_url(parsed)
+            if not title:
+                # Fallback 1: MediaWiki often sets `<a title="词条名">` even when text is empty/image-only.
+                title_attr = str(a.get("title") or "").strip()
+                if title_attr and not self._is_mediawiki_namespace_title(title_attr):
+                    title = title_attr
+            if not title:
+                # Fallback 2: use visible text as last resort
+                text_title = a.get_text(" ", strip=True)
+                if 1 < len(text_title) <= 30 and not self._is_mediawiki_namespace_title(text_title):
+                    title = text_title
+            if not title or self._is_mediawiki_namespace_title(title):
+                continue
+
+            final_url = self._build_moegirl_page_url(title)
+            if final_url in seen:
+                continue
+            seen.add(final_url)
+            score = signal_score(a)
+            if score <= 0:
+                continue
+            candidates.append({"title": title, "url": final_url, "score": score})
+
+        # Prefer links that appear in tables/main text, then fill with the rest.
+        candidates.sort(key=lambda x: (-int(x.get("score") or 0), x.get("title") or ""))
+        for item in candidates[:cap]:
+            links.append({"title": item["title"], "url": item["url"]})
+        return links
+
+    def _fetch_moegirl_html_outgoing_links(self, page_url: str, cap: int) -> List[Dict[str, str]]:
+        """
+        Fetch the actual page HTML and extract outgoing links.
+
+        目的：当 `action=parse` 的 HTML/links 结果异常偏少时，用“浏览器实际页面”兜底一次，
+        避免出现“百科页面明明很多链接，但系统只识别到很少”的体验。
+        """
+        url = self._normalize_url(page_url)
+        if not url:
+            return []
+        try:
+            response = self.session.get(url, timeout=(6, 20))
+            response.raise_for_status()
+            response.encoding = "utf-8"
+            html = response.text or ""
+        except Exception as exc:
+            logger.warning("Moegirl HTML fallback fetch failed url=%s err=%s", url, exc)
+            return []
+
+        soup = BeautifulSoup(html, "lxml")
+        content_root = soup.find("div", class_="mw-parser-output")
+        if not content_root:
+            # 避免退回到 body 把整站 header/footer/sidebar 的链接一并抓进来，导致“无关词条”。
+            # 找不到正文容器时直接放弃兜底链接，宁可少也不要脏。
+            return []
+        return self._extract_moegirl_outgoing_links_from_html(content_root, url, cap=cap)
+
+    def _is_probably_moegirl_list_page(
+        self,
+        title: str,
+        content_root: BeautifulSoup,
+        list_links: List[Dict[str, str]],
+    ) -> bool:
+        """Heuristic list-page detector for Moegirlpedia."""
+        t = str(title or "").strip()
+        if any(k in t for k in ["列表", "目录", "条目", "登场人物", "角色列表", "人物列表", "角色表"]):
+            return True
+
+        if not content_root:
+            return False
+
+        li_count = len(content_root.find_all("li"))
+        paragraph_count = 0
+        for p in content_root.find_all("p"):
+            text = p.get_text(" ", strip=True)
+            if len(text) >= 60:
+                paragraph_count += 1
+            if paragraph_count >= 8:
+                break
+
+        # List pages: many list items, few paragraphs, many list-links
+        if len(list_links) >= 30 and paragraph_count <= 6:
+            return True
+        if li_count >= 50 and paragraph_count <= 4 and len(list_links) >= 12:
+            return True
+        return False
+
+    def _merge_link_lists(
+        self,
+        primary: List[Dict[str, str]],
+        secondary: List[Dict[str, str]],
+        cap: int,
+    ) -> List[Dict[str, str]]:
+        """
+        Merge two link lists with stable order and URL-based de-duplication.
+
+        目的：
+        - 子词条尽量“放开”，但避免重复与命名空间噪声
+        - 保持 primary 的顺序优先（通常是列表项链接，更像“子词条”）
+        """
+        merged: List[Dict[str, str]] = []
+        seen = set()
+
+        def add(items: List[Dict[str, str]]) -> None:
+            for item in items or []:
+                if len(merged) >= cap:
+                    return
+                if not isinstance(item, dict):
+                    continue
+                url = str(item.get("url") or "").strip()
+                title = str(item.get("title") or "").strip()
+                if not url or not title:
+                    continue
+                if url in seen:
+                    continue
+                seen.add(url)
+                merged.append({"title": title, "url": url})
+
+        add(primary)
+        add(secondary)
+        return merged
+
+    # 注意：子词条（links）严格定义为“页面中提及并带链接的词条”。
+    # 因此不从分类/反链等召回“相关但未提及”的页面，避免引入无关词条。
+
+    def _scrape_moegirl(self, url: str, parsed) -> Dict[str, Any]:
+        """
+        Moegirlpedia specialized scraper.
+
+        目标：稳定（尽量避免 HTML 直抓失败），且把高价值信息置顶，提升建卡质量。
+        """
+        normalized_url = self._normalize_url(url)
+        parsed = urlparse(normalized_url) if normalized_url else parsed
+        title = self._moegirl_article_title_from_url(parsed)
+        if not title:
+            return self._scrape_html(normalized_url or url)
+
+        for api_url in [self.MOEGIRL_API_PRIMARY, self.MOEGIRL_API_FALLBACK]:
+            try:
+                params = {
+                    "action": "parse",
+                    "page": title,
+                    "prop": "text|links|categories|sections",
+                    "format": "json",
+                    "formatversion": "2",
+                    "redirects": "1",
+                    "disablelimitreport": "1",
+                }
+                response = self.session.get(api_url, params=params, timeout=(6, 20))
+                response.raise_for_status()
+                response.encoding = "utf-8"
+                data = response.json()
+                if "error" in data:
+                    raise ValueError(str(data.get("error")))
+
+                parse_data = data.get("parse") or {}
+                display_title = str(parse_data.get("title") or title).strip() or title
+                html_content = str(parse_data.get("text") or "")
+                if not html_content.strip():
+                    raise ValueError("empty_parse_text")
+
+                # 重要：链接抽取使用“原始 parse HTML”（不做清理），否则会误删导航模板/目录等导致子词条显著变少。
+                soup_raw = BeautifulSoup(html_content, "lxml")
+                content_root_raw = soup_raw.find("div", class_="mw-parser-output") or soup_raw
+
+                # 内容/预览用于建卡：仍做清理，减少噪声并把高价值信息置顶。
+                soup = BeautifulSoup(html_content, "lxml")
+                content_root = soup.find("div", class_="mw-parser-output") or soup
+                for unwanted in content_root.find_all(
+                    ["nav", "aside", "footer", "script", "style", "noscript"]
+                ):
+                    unwanted.decompose()
+                for cls in ["navbox", "toc", "mw-editsection", "reference", "reflist", "catlinks"]:
+                    for elem in content_root.find_all(class_=re.compile(cls, re.I)):
+                        elem.decompose()
+
+                parsed_data = wiki_parser.parse_page(str(content_root), title=display_title)
+                llm_content = self._format_moegirl_llm_content(parsed_data, content_root, parse_data)
+                preview_content = wiki_parser.format_for_preview(parsed_data, max_chars=self.MAX_PREVIEW_CHARS)
+                if not preview_content:
+                    preview_content = llm_content[: self.MAX_PREVIEW_CHARS]
+
+                base_page_url = self._build_moegirl_page_url(display_title)
+                html_links = self._extract_moegirl_outgoing_links_from_html(
+                    content_root_raw,
+                    base_page_url,
+                    cap=self.MOEGIRL_MAX_LINKS,
+                )
+                is_list_page = self._is_probably_moegirl_list_page(display_title, content_root_raw, html_links)
+
+                links = (html_links or [])[: self.MOEGIRL_MAX_LINKS]
+
+                # 若依旧异常偏少（与用户预期不符），用“页面 HTML”兜底抽一次。
+                html_fallback_links: List[Dict[str, str]] = []
+                if len(links) < 80:
+                    html_fallback_links = self._fetch_moegirl_html_outgoing_links(
+                        base_page_url,
+                        cap=self.MOEGIRL_MAX_LINKS,
+                    )
+                    if html_fallback_links:
+                        links = self._merge_link_lists(links, html_fallback_links, cap=self.MOEGIRL_MAX_LINKS)
+                        links = (links or [])[: self.MOEGIRL_MAX_LINKS]
+
+                logger.info(
+                    "Moegirl parsed title=%s llm_chars=%s links=%s (html=%s html_fallback=%s) is_list_page=%s",
+                    display_title,
+                    len(llm_content or ""),
+                    len(links or []),
+                    len(html_links or []),
+                    len(html_fallback_links or []),
+                    is_list_page,
+                )
+
+                return {
+                    "success": True,
+                    "title": display_title,
+                    "content": self._clean_content(preview_content),
+                    "llm_content": self._clean_content(llm_content),
+                    "links": links[: self.MOEGIRL_MAX_LINKS],
+                    "is_list_page": is_list_page,
+                    "url": base_page_url,
+                }
+            except Exception as exc:
+                logger.warning("Moegirl API parse failed api=%s url=%s err=%s", api_url, url, exc)
+                continue
+
+        # Final fallback: direct HTML
+        return self._scrape_html(normalized_url or url)
+
+    def _extract_moegirl_links(self, parse_data: Dict[str, Any]) -> List[Dict[str, str]]:
+        raw_links = parse_data.get("links") or []
+        # 兼容少数站点/版本把 links 包成对象（或根本不是 list）
+        if isinstance(raw_links, dict):
+            raw_links = raw_links.get("*") or raw_links.get("links") or []
+        links: List[Dict[str, str]] = []
+        seen = set()
+        for item in raw_links[: self.MOEGIRL_MAX_LINKS * 3]:
+            name = ""
+            ns = None
+            if isinstance(item, dict):
+                ns = item.get("ns")
+                # MediaWiki `action=parse&prop=links` 的字段在不同站点/formatversion 下可能不同：
+                # - {"*": "标题"} (常见)
+                # - {"title": "标题"} (部分站点/版本)
+                # - {"link": "标题"} (兼容)
+                name = str(item.get("link") or item.get("*") or item.get("title") or item.get("name") or "").strip()
+            elif isinstance(item, str):
+                name = item.strip()
+            else:
+                continue
+            if not name or len(name) < 2:
+                continue
+            # 尽量聚焦“词条页”（主命名空间）。若 ns 缺失，则不拦截。
+            if ns is not None and ns not in (0, "0"):
+                continue
+            if self._is_mediawiki_namespace_title(name):
+                continue
+            lowered = name.lower()
+            if any(
+                lowered.startswith(prefix)
+                for prefix in ["special:", "file:", "talk:", "template:", "user:", "help:", "category:"]
+            ):
+                continue
+            url = self._build_moegirl_page_url(name)
+            if url in seen:
+                continue
+            seen.add(url)
+            links.append({"title": name, "url": url})
+            if len(links) >= self.MOEGIRL_MAX_LINKS:
+                break
+        return links
+
+    def _format_moegirl_llm_content(
+        self,
+        parsed_data: Dict[str, Any],
+        content_root: BeautifulSoup,
+        parse_data: Dict[str, Any],
+    ) -> str:
+        """
+        Moegirl LLM content formatting: put high-value evidence first.
+        用途：仅用于“建卡”，因此优先：简介 + 基础资料/信息框 + 关键段落。
+        """
+        title = str(parsed_data.get("title") or "").strip()
+        summary = str(parsed_data.get("summary") or "").strip()
+        infobox = parsed_data.get("infobox") or {}
+        sections = parsed_data.get("sections") or {}
+        categories = []
+        for item in (parse_data.get("categories") or [])[:30]:
+            if isinstance(item, dict):
+                name = str(item.get("category") or item.get("*") or "").strip()
+                if name:
+                    categories.append(name)
+            elif isinstance(item, str) and item.strip():
+                categories.append(item.strip())
+
+        parts: List[str] = []
+        if title:
+            parts.append(title)
+        if summary:
+            parts.append("【简介】\n" + summary)
+
+        if infobox:
+            lines = []
+            for k, v in list(infobox.items())[:28]:
+                key = str(k or "").strip()
+                val = str(v or "").strip()
+                if key and val:
+                    lines.append(f"{key}: {val}")
+            if lines:
+                parts.append("【基础资料】\n" + "\n".join(lines))
+
+        if sections:
+            # Keep only the most relevant sections for building a card
+            ordered = []
+            priority = {"appearance": 1, "personality": 2, "background": 3, "abilities": 4, "relationships": 5}
+            for k, v in sections.items():
+                ordered.append((priority.get(k, 99), str(v or "").strip()))
+            ordered.sort(key=lambda x: x[0])
+            kept = 0
+            for _, text in ordered:
+                if not text:
+                    continue
+                parts.append("【关键段落】\n" + text[:1800].strip())
+                kept += 1
+                if kept >= 3:
+                    break
+
+        if categories:
+            parts.append("【分类】\n" + "、".join(categories[:20]))
+
+        # Append a compact excerpt from the page to avoid missing important cues (but keep it late).
+        extra = []
+        for p in content_root.find_all("p")[:25]:
+            text = p.get_text(" ", strip=True)
+            if len(text) >= 25:
+                extra.append(text)
+            if len(extra) >= 10:
+                break
+        if extra:
+            parts.append("【正文摘录】\n" + "\n".join(extra))
+
+        text = "\n\n".join([p for p in parts if p]).strip()
+        if len(text) > self.MAX_LLM_CHARS:
+            text = text[: self.MAX_LLM_CHARS].rstrip() + "\n\n[Content truncated]"
+        return text
 
     def _extract_mediawiki_title(self, parsed) -> Optional[str]:
         if "index.php" in parsed.path:
@@ -146,7 +700,7 @@ class CrawlerService:
             return self._build_from_html(html_content, title, url)
 
         except Exception as exc:
-            logger.error(f"MediaWiki parse error: {exc}")
+            logger.error("MediaWiki parse error: %s", exc)
             return self._scrape_html(url)
 
     def _scrape_wikipedia(self, url: str, parsed) -> Dict[str, Any]:
@@ -170,7 +724,7 @@ class CrawlerService:
                 if title_tag:
                     title = title_tag.get_text(strip=True).split(" - ")[0]
             except Exception as exc:
-                logger.warning(f"Failed to extract title: {exc}")
+                logger.warning("Failed to extract title: %s", exc)
 
             return self._build_from_html(html, title or article_name, url)
         except Exception:
@@ -200,7 +754,7 @@ class CrawlerService:
                 if title_tag:
                     title = title_tag.get_text(strip=True).split(" - ")[0]
             except Exception as exc:
-                logger.warning(f"Failed to extract title: {exc}")
+                logger.warning("Failed to extract title: %s", exc)
 
             return self._build_from_html(html, title, url)
 
@@ -349,8 +903,13 @@ class CrawlerService:
         def add_link(href: str, link_text: str) -> None:
             full_url = urljoin(base_url, href)
             full_url, _ = urldefrag(full_url)
-            if urlparse(full_url).netloc != base_domain:
-                return
+            full_domain = urlparse(full_url).netloc
+            if full_domain != base_domain:
+                # 萌娘百科在移动/桌面/分站之间可能混用域名：mzh / zh / www
+                if "moegirl.org" in (base_domain or "") and "moegirl.org" in (full_domain or ""):
+                    pass
+                else:
+                    return
             if any(x in href.lower() for x in ["special:", "file:", "talk:", "template:", "user:"]):
                 return
             if not link_text or len(link_text) < 2:
@@ -436,7 +995,7 @@ class CrawlerService:
                 timeout = aiohttp.ClientTimeout(total=30)
                 async with session.get(url, headers=headers, timeout=timeout) as response:
                     if response.status != 200:
-                        logger.warning(f"HTTP {response.status} for {url}")
+                        logger.warning("HTTP %s for %s", response.status, url)
                         return {"success": False, "url": url, "error": f"Status {response.status}"}
 
                     content_bytes = await response.read()
@@ -448,7 +1007,7 @@ class CrawlerService:
                         try:
                             html = content_bytes.decode(encoding, errors="replace")
                         except (UnicodeDecodeError, LookupError) as exc:
-                            logger.warning(f"Failed to decode with {encoding}: {exc}")
+                            logger.warning("Failed to decode with %s: %s", encoding, exc)
                             html = content_bytes.decode("utf-8", errors="replace")
 
                     title = ""
@@ -458,7 +1017,7 @@ class CrawlerService:
                         if title_tag:
                             title = title_tag.get_text(strip=True).split(" - ")[0]
                     except Exception as exc:
-                        logger.warning(f"Failed to extract title: {exc}")
+                        logger.warning("Failed to extract title: %s", exc)
 
                     parsed_data = wiki_parser.parse_page(html, title=title or url.split("/")[-1])
                     parsed_data["url"] = url
@@ -489,7 +1048,7 @@ class CrawlerService:
                     return parsed_data
 
             except Exception as exc:
-                logger.error(f"Concurrent scraper failed {url}: {exc}")
+                logger.error("Concurrent scraper failed %s: %s", url, exc)
                 return {"success": False, "url": url, "error": str(exc)}
 
 

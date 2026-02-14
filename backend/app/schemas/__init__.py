@@ -7,6 +7,7 @@ from .project import Project, ProjectCreate
 from .card import CharacterCard, WorldCard, StyleCard
 from .canon import Fact, TimelineEvent, CharacterState
 from .draft import Draft, SceneBrief, ReviewResult
+from .evidence import EvidenceItem, EvidenceIndexMeta
 
 __all__ = [
     "Project",
@@ -20,4 +21,6 @@ __all__ = [
     "Draft",
     "SceneBrief",
     "ReviewResult",
+    "EvidenceItem",
+    "EvidenceIndexMeta",
 ]

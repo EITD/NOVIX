@@ -95,6 +95,7 @@ class ChapterSummary(BaseModel):
 
     chapter: str = Field(..., description="Chapter ID / 章节ID")
     volume_id: Optional[str] = Field(default=None, description="Volume ID / 所属分卷ID")
+    order_index: Optional[int] = Field(default=None, description="Order index within volume / 卷内排序序号")
     title: str = Field(default="", description="Chapter title / 章节标题")
     word_count: int = Field(default=0, description="Word count / 字数")
     key_events: List[str] = Field(default_factory=list, description="Key events / 关键事件")

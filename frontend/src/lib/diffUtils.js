@@ -6,9 +6,21 @@
     const revisedLines = normalize(revisedText).split("\n");
 
     const lcs = buildLcsMatrix(originalLines, revisedLines);
-    const ops = buildDiffOps(originalLines, revisedLines, lcs);
+    let ops = buildDiffOps(originalLines, revisedLines, lcs);
 
-    const { hunks, stats } = buildHunksFromOps(ops, contextLines);
+    let { hunks, stats } = buildHunksFromOps(ops, contextLines);
+    const applied = applyDiffOpsWithDecisions(originalLines, ops, {});
+    if (normalize(applied) !== normalize(revisedText)) {
+        const fallbackOps = [];
+        originalLines.forEach((line) => {
+            fallbackOps.push({ type: "delete", content: line, hunkId: "hunk-1" });
+        });
+        revisedLines.forEach((line) => {
+            fallbackOps.push({ type: "add", content: line, hunkId: "hunk-1" });
+        });
+        ops = fallbackOps;
+        ({ hunks, stats } = buildHunksFromOps(ops, contextLines));
+    }
 
     return {
         originalLines,
@@ -36,7 +48,7 @@ export const applyDiffOpsWithDecisions = (originalLines = [], ops = [], decision
         }
 
         if (op.type === "delete") {
-            if (decision === "rejected") {
+            if (decision === "rejected" || decision === "pending") {
                 result.push(op.content);
             }
         }

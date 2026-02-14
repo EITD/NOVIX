@@ -4,6 +4,11 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 venv/
 env/
 ENV/
@@ -11,6 +16,13 @@ ENV/
 dist/
 build/
 *.spec
+!WenShape.spec
+
+# Local databases / caches
+*.sqlite
+*.sqlite3
+*.db
+*.tmp
 
 # Environment & Secrets (CRITICAL)
 .env
@@ -57,10 +69,12 @@ backend/data/agent_assignments.json
 *.log
 traces/
 
-# Temporary Debug Scripts
-test_*.py
-debug_*.py
-verify_api_config.py
+# Temporary Debug Scripts (root level only, not tests/)
+/test_*.py
+/debug_*.py
+/verify_api_config.py
+backend/test_*.py
+backend/debug_*.py
 
 # Static Assets (if generated)
 backend/static/

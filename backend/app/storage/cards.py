@@ -4,6 +4,7 @@ Card storage.
 
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+import re
 
 from app.storage.base import BaseStorage
 from app.schemas.card import CharacterCard, WorldCard, StyleCard
@@ -39,7 +40,21 @@ class CardStorage(BaseStorage):
             / f"{card.name}.yaml"
         )
 
-        await self.write_yaml(file_path, card.model_dump())
+        payload = card.model_dump(exclude_none=True)
+        if file_path.exists():
+            try:
+                existing = await self.read_yaml(file_path)
+                if isinstance(existing, dict):
+                    existing.update(payload)
+                    if "stars" not in existing:
+                        existing["stars"] = self._normalize_stars(None)
+                    payload = existing
+            except Exception:
+                pass
+        if "stars" not in payload:
+            payload["stars"] = self._normalize_stars(None)
+
+        await self.write_yaml(file_path, payload)
 
     async def list_character_cards(self, project_id: str) -> List[str]:
         cards_dir = self.get_project_path(project_id) / "cards" / "characters"
@@ -72,13 +87,33 @@ class CardStorage(BaseStorage):
 
     async def save_world_card(self, project_id: str, card: WorldCard) -> None:
         file_path = self.get_project_path(project_id) / "cards" / "world" / f"{card.name}.yaml"
-        await self.write_yaml(file_path, card.model_dump())
+        payload = card.model_dump(exclude_none=True)
+        if file_path.exists():
+            try:
+                existing = await self.read_yaml(file_path)
+                if isinstance(existing, dict):
+                    existing.update(payload)
+                    if "stars" not in existing:
+                        existing["stars"] = self._normalize_stars(None)
+                    payload = existing
+            except Exception:
+                pass
+        if "stars" not in payload:
+            payload["stars"] = self._normalize_stars(None)
+        await self.write_yaml(file_path, payload)
 
     async def list_world_cards(self, project_id: str) -> List[str]:
         cards_dir = self.get_project_path(project_id) / "cards" / "world"
         if not cards_dir.exists():
             return []
         return [f.stem for f in cards_dir.glob("*.yaml")]
+
+    async def delete_world_card(self, project_id: str, card_name: str) -> bool:
+        file_path = self.get_project_path(project_id) / "cards" / "world" / f"{card_name}.yaml"
+        if file_path.exists():
+            file_path.unlink()
+            return True
+        return False
 
     async def get_style_card(self, project_id: str) -> Optional[StyleCard]:
         file_path = self.get_project_path(project_id) / "cards" / "style.yaml"
@@ -95,9 +130,11 @@ class CardStorage(BaseStorage):
 
     def _coerce_character_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         name = str(data.get("name", "")).strip()
+        aliases = self._normalize_aliases(data.get("aliases"))
+        stars = self._normalize_stars(data.get("stars"))
         description = str(data.get("description", "")).strip()
         if description:
-            return {"name": name, "description": description}
+            return {"name": name, "aliases": aliases, "description": description, "stars": stars}
 
         parts = []
         identity = str(data.get("identity", "")).strip()
@@ -132,28 +169,69 @@ class CardStorage(BaseStorage):
         if arc:
             parts.append(f"角色弧线: {arc}")
 
-        return {"name": name, "description": "\n".join(parts).strip()}
+        return {"name": name, "aliases": aliases, "description": "\n".join(parts).strip(), "stars": stars}
 
     def _coerce_world_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         name = str(data.get("name", "")).strip()
         description = str(data.get("description", "")).strip()
-        if description and "category" not in data and "rules" not in data and "immutable" not in data:
-            return {"name": name, "description": description}
+        aliases = self._normalize_aliases(data.get("aliases"))
+        stars = self._normalize_stars(data.get("stars"))
+        category = str(data.get("category", "")).strip()
+        category = category if category else None
+        rules = data.get("rules") or []
+        if isinstance(rules, str):
+            rules = [item.strip() for item in re.split(r"[,\n，;；]+", rules) if item.strip()]
+        if not isinstance(rules, list):
+            rules = []
+        rules = [str(item).strip() for item in rules if str(item).strip()]
+        immutable = data.get("immutable")
+        if not isinstance(immutable, bool):
+            immutable = None
+        if description:
+            return {
+                "name": name,
+                "description": description,
+                "aliases": aliases,
+                "category": category,
+                "rules": rules,
+                "immutable": immutable,
+                "stars": stars,
+            }
 
         parts = []
-        if description:
-            parts.append(description)
-        category = str(data.get("category", "")).strip()
         if category:
             parts.append(f"类型: {category}")
-        rules = data.get("rules") or []
         if isinstance(rules, list) and rules:
             parts.append(f"规则: {', '.join([str(item) for item in rules if item])}")
-        immutable = data.get("immutable")
         if isinstance(immutable, bool):
             parts.append("不可变: 是" if immutable else "不可变: 否")
 
-        return {"name": name, "description": "\n".join([item for item in parts if item]).strip()}
+        return {
+            "name": name,
+            "description": "\n".join([item for item in parts if item]).strip(),
+            "aliases": aliases,
+            "category": category,
+            "rules": rules,
+            "immutable": immutable,
+            "stars": stars,
+        }
+
+    def _normalize_aliases(self, value: Any) -> List[str]:
+        if isinstance(value, str):
+            parts = re.split(r"[,，;；\n]+", value)
+        elif isinstance(value, list):
+            parts = value
+        else:
+            parts = []
+        aliases = [str(item).strip() for item in parts if str(item).strip()]
+        return list(dict.fromkeys(aliases))
+
+    def _normalize_stars(self, value: Any) -> int:
+        try:
+            stars = int(value)
+        except Exception:
+            return 1
+        return max(1, min(stars, 3))
 
     def _coerce_style_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         style = str(data.get("style", "")).strip()
@@ -183,5 +261,3 @@ class CardStorage(BaseStorage):
 
         return {"style": "\n".join([item for item in parts if item]).strip()}
 
-
-cards_storage = CardStorage()

@@ -5,6 +5,7 @@ Dynamic context retriever.
 from typing import Any, Dict, List, Tuple
 
 from app.utils.chapter_id import ChapterIDValidator
+from app.utils.dynamic_ranges import calculate_dynamic_ranges
 
 
 class DynamicContextRetriever:
@@ -15,6 +16,7 @@ class DynamicContextRetriever:
     TOKENS_PER_CHAPTER_SUMMARY = 100
     TOKENS_PER_VOLUME_SUMMARY = 150
     TOKENS_PER_TITLE = 10
+    TOKENS_PER_TAIL_CHUNK = 80
 
     LEVEL_FULL_FACTS = "full_facts"
     LEVEL_SUMMARY_WITH_EVENTS = "summary_events"
@@ -35,29 +37,22 @@ class DynamicContextRetriever:
                 "summary_only": [],
                 "title_only": [],
                 "volume_summaries": [],
+                "previous_tail_chunks": [],
                 "total_tokens": 0,
                 "chapters_retrieved": 0,
             }
 
-        ranges = self._calculate_dynamic_ranges(total_chapters)
+        ranges = calculate_dynamic_ranges(total_chapters)
         chapter_levels = self._assign_retrieval_levels(all_chapters, current_chapter, ranges)
         context = await self._retrieve_within_budget(project_id, chapter_levels, self.MAX_CONTEXT_TOKENS)
 
         volume_summaries = await self._retrieve_volume_summaries(project_id, current_chapter, context["total_tokens"])
         context["volume_summaries"] = volume_summaries["items"]
         context["total_tokens"] += volume_summaries["tokens"]
+        tail_chunks, tail_tokens = await self._retrieve_previous_tail_chunks(project_id, current_chapter)
+        context["previous_tail_chunks"] = tail_chunks
+        context["total_tokens"] += tail_tokens
         return context
-
-    def _calculate_dynamic_ranges(self, total_chapters: int) -> Dict[str, int]:
-        if total_chapters <= 20:
-            return {"full_facts": 2, "summary_events": 5, "summary_only": 10, "title_only": 20}
-        if total_chapters <= 50:
-            return {"full_facts": 2, "summary_events": 5, "summary_only": 15, "title_only": 50}
-        if total_chapters <= 100:
-            return {"full_facts": 3, "summary_events": 8, "summary_only": 25, "title_only": 100}
-        if total_chapters <= 300:
-            return {"full_facts": 3, "summary_events": 10, "summary_only": 40, "title_only": 300}
-        return {"full_facts": 5, "summary_events": 15, "summary_only": 60, "title_only": total_chapters}
 
     def _assign_retrieval_levels(
         self,
@@ -66,8 +61,11 @@ class DynamicContextRetriever:
         ranges: Dict[str, int],
     ) -> List[Tuple[str, str, int]]:
         result = []
-        for chapter in all_chapters:
-            distance = ChapterIDValidator.calculate_distance(current_chapter, chapter)
+        total = len(all_chapters)
+        for idx, chapter in enumerate(all_chapters):
+            # 距离按“顺序列表中的相对位置”计算，确保与用户自定义章节顺序一致。
+            # all_chapters 为“当前章节之前的章节列表（旧 -> 新）”，因此越靠后越近。
+            distance = max(1, total - idx)
             if distance <= ranges["full_facts"]:
                 level = self.LEVEL_FULL_FACTS
             elif distance <= ranges["summary_events"]:
@@ -150,6 +148,23 @@ class DynamicContextRetriever:
 
         return {"items": items, "tokens": tokens}
 
+    async def _retrieve_previous_tail_chunks(
+        self,
+        project_id: str,
+        current_chapter: str,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        if not hasattr(self.storage, "get_chapter_tail_chunks"):
+            return [], 0
+        chapters = await self._get_all_previous_chapters(project_id, current_chapter)
+        if not chapters:
+            return [], 0
+        previous = chapters[-1]
+        chunks = await self.storage.get_chapter_tail_chunks(project_id, previous, limit=2)
+        token_estimate = 0
+        for chunk in chunks:
+            token_estimate += max(len(str(chunk.get("text") or "")) // 2, self.TOKENS_PER_TAIL_CHUNK)
+        return chunks, token_estimate
+
     def _downgrade_level(self, level: str) -> str:
         downgrade_map = {
             self.LEVEL_FULL_FACTS: self.LEVEL_SUMMARY_WITH_EVENTS,
@@ -204,7 +219,27 @@ class DynamicContextRetriever:
         return content
 
     async def _get_all_previous_chapters(self, project_id: str, current_chapter: str) -> List[str]:
-        all_chapters = await self.storage.list_chapters(project_id)
-        all_chapters.sort(key=lambda ch: ChapterIDValidator.calculate_weight(ch))
-        current_weight = ChapterIDValidator.calculate_weight(current_chapter)
-        return [chapter for chapter in all_chapters if ChapterIDValidator.calculate_weight(chapter) < current_weight]
+        chapters = await self.storage.list_chapters(project_id)
+        if not chapters:
+            return []
+
+        canonical_current = str(current_chapter or "").strip()
+        if canonical_current in chapters:
+            index = chapters.index(canonical_current)
+            return chapters[:index]
+
+        # 当前章节尚未创建：退化为权重比较，但保持 chapters 的既有顺序（包含自定义排序）。
+        try:
+            current_weight = ChapterIDValidator.calculate_weight(canonical_current)
+        except Exception:
+            return chapters
+        if current_weight <= 0:
+            return chapters
+        previous = []
+        for chapter_id in chapters:
+            try:
+                if ChapterIDValidator.calculate_weight(chapter_id) < current_weight:
+                    previous.append(chapter_id)
+            except Exception:
+                continue
+        return previous

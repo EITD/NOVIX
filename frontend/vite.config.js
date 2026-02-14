@@ -1,20 +1,44 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: 3000,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
-      },
-      '/ws': {
-        target: 'ws://localhost:8000',
-        ws: true
+const parsePort = (value, fallback) => {
+  const port = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(port) && port > 0 ? port : fallback;
+};
+
+const normalizeBaseUrl = (raw) => String(raw || '').trim().replace(/\/+$/, '');
+
+const toWsUrl = (httpUrl) => {
+  if (!httpUrl) return '';
+  if (httpUrl.startsWith('https://')) return httpUrl.replace(/^https:\/\//, 'wss://');
+  if (httpUrl.startsWith('http://')) return httpUrl.replace(/^http:\/\//, 'ws://');
+  return httpUrl;
+};
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+
+  const frontendPort = parsePort(env.VITE_DEV_PORT || env.WENSHAPE_FRONTEND_PORT, 3000);
+  const backendPort = parsePort(env.VITE_BACKEND_PORT || env.WENSHAPE_BACKEND_PORT, 8000);
+  const backendBaseUrl = normalizeBaseUrl(env.VITE_BACKEND_URL) || `http://localhost:${backendPort}`;
+  const backendWsUrl = normalizeBaseUrl(env.VITE_BACKEND_WS_URL) || toWsUrl(backendBaseUrl);
+
+  return {
+    plugins: [react()],
+    server: {
+      port: frontendPort,
+      strictPort: false,
+      proxy: {
+        '/api': {
+          target: backendBaseUrl,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, '')
+        },
+        '/ws': {
+          target: backendWsUrl,
+          ws: true
+        }
       }
     }
-  }
-})
+  };
+});
