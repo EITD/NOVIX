@@ -1,3 +1,14 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   模型管理页面 - LLM 配置卡与智能体分配管理
+ */
+
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import useSWR, { mutate } from 'swr';
@@ -6,10 +17,17 @@ import { Card, Button } from '../components/ui/core';
 import { configAPI } from '../api';
 import LLMProfileModal from '../components/LLMProfileModal';
 
-// SWR 获取器
+// SWR 获取器 / SWR fetcher
 const fetcher = (fn) => fn().then((res) => res.data);
 
-// 骨架屏
+/**
+ * 骨架屏加载动画 / Skeleton Loader for Cards
+ *
+ * 显示卡片加载中的占位符动画。
+ *
+ * @component
+ * @returns {JSX.Element} 骨架屏
+ */
 const ProfileCardSkeleton = () => (
     <div className="bg-[var(--vscode-bg)] border border-[var(--vscode-sidebar-border)] rounded-[6px] p-5 animate-pulse">
         <div className="flex justify-between items-start mb-4">

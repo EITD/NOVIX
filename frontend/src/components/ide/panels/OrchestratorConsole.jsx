@@ -1,3 +1,15 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   编排器控制台面板 - 交互式调试界面，用于测试智能体工作流和手动执行编排任务
+ *   Orchestrator console panel for interactive debugging and manual workflow testing.
+ */
+
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Send, Play, RotateCcw, Save, Sparkles,
@@ -7,7 +19,22 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn, Button } from '../../ui/core';
 
-// --- 子组件 ---
+/**
+ * 编排器控制台面板 - 编排工作流的交互式调试工具
+ *
+ * Interactive console for orchestrator debugging and testing. Allows users to send
+ * commands to agents, view responses, and monitor execution logs.
+ *
+ * @component
+ * @example
+ * return (
+ *   <OrchestratorConsole />
+ * )
+ *
+ * @returns {JSX.Element} 编排器控制台元素 / Orchestrator console element
+ */
+
+// --- 子组件 / Subcomponents ---
 
 const ConsoleMessage = ({ msg }) => {
     const isUser = msg.type === 'user';

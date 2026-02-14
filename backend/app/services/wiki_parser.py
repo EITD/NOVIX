@@ -1,11 +1,31 @@
-﻿from bs4 import BeautifulSoup
+﻿# -*- coding: utf-8 -*-
+"""
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  Wiki 页面结构解析器 - 无需 LLM 的算法化 Wiki 页面解析，提取信息框、段落、表格等结构化数据。
+  Wiki page structured parser - Algorithmic parser for extracting structured data (infoboxes, sections, tables) from Wiki HTML without LLM dependency.
+"""
+
+from bs4 import BeautifulSoup
 from typing import Dict, List
 
 
 class WikiStructuredParser:
     """
+    Wiki 页面结构化解析器 - 从 Wiki HTML 提取结构化信息。
+
     Algorithmic parser for Wiki pages to extract structured data without LLM.
     Focuses on infoboxes, key sections, tables, and introductions.
+    Maps common field names and section keywords across different Wiki platforms.
+
+    Attributes:
+        SECTION_KEYWORDS: 部分关键词映射 (appearance, personality, etc.) / Section type keyword mappings
+        FIELD_MAPPING: 标准字段映射 (name, gender, age, etc.) / Standard infobox field name mappings
     """
 
     SECTION_KEYWORDS = {

@@ -1,25 +1,63 @@
+# -*- coding: utf-8 -*-
 """
-Base Storage Class / 存储基类
-Common utilities for file operations
-文件操作的通用工具
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  基础存储类 - 提供文件操作的通用工具，支持YAML、JSONL和纯文本文件
+  Base Storage Class - Common utilities for file operations (YAML, JSONL, text).
+
+设计特点 / Design Features:
+  - 原子化写入：使用临时文件+rename保证数据完整性
+  - Atomic writes: Uses temp files + rename for data integrity
+  - 并发控制：通过文件锁保护JSONL写入
+  - Concurrency: File locks protect JSONL append operations
+  - 异步I/O：使用aiofiles避免阻塞事件循环
+  - Async I/O: Uses aiofiles to avoid blocking event loop
 """
 
 import json
+import asyncio
+import os
 import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional
 import aiofiles
+from app.storage.file_lock import get_file_lock
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class BaseStorage:
-    """Base storage class with common file operations / 带通用文件操作的存储基类"""
-    
+    """
+    存储基类 - 提供通用的文件操作接口
+
+    Base Storage Class - Provides common file operation interface.
+
+    所有具体的存储实现（CardStorage, CanonStorage等）都应继承此类。
+    提供了对YAML、JSONL和纯文本文件的异步读写操作。
+
+    All concrete storage implementations (CardStorage, CanonStorage, etc.)
+    should inherit from this class. Provides async operations for YAML, JSONL,
+    and text files with atomic writes and concurrency control.
+
+    Attributes:
+        data_dir (Path): 数据根目录路径 / Root data directory path
+        encoding (str): 文件编码，默认为utf-8 / File encoding, default utf-8
+    """
+
     def __init__(self, data_dir: Optional[str] = None):
         """
-        Initialize storage
-        
+        初始化存储实例
+
+        Initialize storage instance.
+
         Args:
-            data_dir: Root data directory / 数据根目录
+            data_dir: 数据根目录，如为None则从配置读取 / Root data directory, None reads from config
         """
         from app.config import settings
         raw_data_dir = str(data_dir or settings.data_dir)
@@ -31,119 +69,254 @@ class BaseStorage:
             resolved = (backend_root / resolved).resolve()
         self.data_dir = resolved
         self.encoding = "utf-8"
-    
+
     def get_project_path(self, project_id: str) -> Path:
-        """Get project directory path / 获取项目目录路径"""
+        """
+        获取项目目录路径
+
+        Get project directory path.
+
+        Args:
+            project_id: 项目ID / Project ID
+
+        Returns:
+            项目目录路径 / Project directory path
+        """
         return self.data_dir / project_id
-    
+
     def ensure_dir(self, path: Path) -> None:
-        """Ensure directory exists / 确保目录存在"""
+        """
+        确保目录存在，必要时创建
+
+        Ensure directory exists, create if necessary.
+
+        Args:
+            path: 目录路径 / Directory path
+        """
         path.mkdir(parents=True, exist_ok=True)
-    
+
+    async def _atomic_write(self, file_path: Path, content: str) -> None:
+        """
+        原子化写入文件
+
+        Write file atomically using temp file + rename strategy.
+
+        确保文件完整性：
+        - 写入临时文件
+        - 原子性替换（rename）原始文件
+        - 处理Windows特殊情况（权限锁定）
+        - 清理临时文件
+
+        Ensures data integrity by:
+        - Writing to temp file first
+        - Atomic rename to target
+        - Windows-specific lock handling with retries
+        - Cleanup of temp files
+
+        Args:
+            file_path: 目标文件路径 / Target file path
+            content: 文件内容 / File content
+
+        Raises:
+            OSError: 如果写入失败且无法恢复 / If write fails and cannot recover
+        """
+        self.ensure_dir(file_path.parent)
+        tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
+        tmp_written = False
+        try:
+            # 写入临时文件 / Write to temp file
+            async with aiofiles.open(tmp_path, 'w', encoding=self.encoding) as f:
+                await f.write(content)
+            tmp_written = True
+            try:
+                # 原子性替换 / Atomic rename
+                os.replace(tmp_path, file_path)
+                tmp_written = False
+            except (PermissionError, OSError) as exc:
+                # Windows can deny replace when the destination file is open by another process
+                # (e.g., concurrent readers without delete sharing). Retry briefly, then fall back
+                # to direct write to avoid breaking core flows like evidence indexing / memory pack building.
+                # Windows文件锁定：如果目标文件被其他进程打开，replace会失败
+                # 重试几次，然后回退到直接写入
+                winerror = getattr(exc, "winerror", None)
+                is_windows_lock = isinstance(exc, PermissionError) or winerror in {5, 32}
+                if not is_windows_lock:
+                    raise
+
+                last_exc: Exception = exc
+                for attempt in range(4):
+                    await asyncio.sleep(0.05 * (attempt + 1))
+                    try:
+                        os.replace(tmp_path, file_path)
+                        tmp_written = False
+                        break
+                    except (PermissionError, OSError) as retry_exc:
+                        last_exc = retry_exc
+                        continue
+
+                if tmp_written:
+                    logger.warning("原子替换失败，回退到直接写入 / Atomic replace failed, falling back to direct write: %s", last_exc)
+                    for attempt in range(3):
+                        try:
+                            async with aiofiles.open(file_path, 'w', encoding=self.encoding) as f:
+                                await f.write(content)
+                            break
+                        except (PermissionError, OSError) as write_exc:
+                            last_exc = write_exc
+                            await asyncio.sleep(0.05 * (attempt + 1))
+                    else:
+                        raise last_exc
+        finally:
+            # 清理临时文件 / Cleanup temp file
+            if tmp_path.exists() and tmp_path != file_path:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    # Best-effort cleanup: anti-virus / indexers can transiently lock tmp files.
+                    # 尽力清理：杀毒软件/索引器可能会暂时锁定临时文件
+                    for attempt in range(3):
+                        try:
+                            await asyncio.sleep(0.05 * (attempt + 1))
+                            tmp_path.unlink(missing_ok=True)
+                            break
+                        except Exception:
+                            continue
+
     async def read_yaml(self, file_path: Path) -> Dict[str, Any]:
         """
-        Read YAML file asynchronously / 异步读取 YAML 文件
-        
+        异步读取YAML文件
+
+        Read YAML file asynchronously.
+
         Args:
-            file_path: Path to YAML file / YAML 文件路径
-            
+            file_path: YAML文件路径 / Path to YAML file
+
         Returns:
-            Parsed YAML content / 解析后的内容
+            解析后的内容（字典） / Parsed YAML content
+
+        Raises:
+            FileNotFoundError: 如果文件不存在 / If file not found
         """
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
-        
+
         async with aiofiles.open(file_path, 'r', encoding=self.encoding) as f:
             content = await f.read()
             return yaml.safe_load(content)
-    
+
     async def write_yaml(self, file_path: Path, data: Dict[str, Any]) -> None:
         """
-        Write YAML file asynchronously / 异步写入 YAML 文件
-        
+        异步写入YAML文件
+
+        Write YAML file asynchronously.
+
         Args:
-            file_path: Path to YAML file / YAML 文件路径
-            data: Data to write / 要写入的数据
+            file_path: YAML文件路径 / Path to YAML file
+            data: 要写入的数据 / Data to write
         """
         self.ensure_dir(file_path.parent)
-        
-        async with aiofiles.open(file_path, 'w', encoding=self.encoding) as f:
-            yaml_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
-            await f.write(yaml_content)
-    
+
+        yaml_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
+        await self._atomic_write(file_path, yaml_content)
+
     async def read_jsonl(self, file_path: Path) -> list:
         """
-        Read JSONL file / 读取 JSONL 文件
-        
+        读取JSONL文件（每行一个JSON对象）
+
+        Read JSONL file (one JSON object per line).
+
         Args:
-            file_path: Path to JSONL file / JSONL 文件路径
-            
+            file_path: JSONL文件路径 / Path to JSONL file
+
         Returns:
-            List of parsed JSON objects / JSON 对象列表
+            解析后的JSON对象列表 / List of parsed JSON objects
         """
         if not file_path.exists():
             return []
-        
+
         items = []
+        bad_lines = 0
         async with aiofiles.open(file_path, 'r', encoding=self.encoding) as f:
             async for line in f:
                 line = line.strip()
                 if line:
-                    items.append(json.loads(line))
+                    try:
+                        items.append(json.loads(line))
+                    except Exception:
+                        bad_lines += 1
+                        continue
+        if bad_lines:
+            logger.warning("JSONL解析跳过 %s 行坏行 / JSONL parse skipped %s bad lines: %s", bad_lines, str(file_path))
         return items
-    
+
     async def append_jsonl(self, file_path: Path, item: Dict[str, Any]) -> None:
         """
-        Append item to JSONL file / 追加条目到 JSONL 文件
-        
+        追加条目到JSONL文件（带锁保护）
+
+        Append item to JSONL file with lock protection.
+
+        用文件锁保护并发追加操作，确保数据完整性。
+        Protected by file lock to ensure data integrity during concurrent appends.
+
         Args:
-            file_path: Path to JSONL file / JSONL 文件路径
-            item: Item to append / 要追加的条目
+            file_path: JSONL文件路径 / Path to JSONL file
+            item: 要追加的条目 / Item to append
         """
         self.ensure_dir(file_path.parent)
-        
-        async with aiofiles.open(file_path, 'a', encoding=self.encoding) as f:
-            await f.write(json.dumps(item, ensure_ascii=False) + '\n')
+
+        file_lock = get_file_lock()
+        async with file_lock.lock(file_path):
+            async with aiofiles.open(file_path, 'a', encoding=self.encoding) as f:
+                await f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
     async def write_jsonl(self, file_path: Path, items: list) -> None:
         """
-        Write JSONL file / 鍐欏叆 JSONL 鏂囦欢
+        写入JSONL文件（带锁保护）
+
+        Write JSONL file with lock protection.
+
+        用文件锁保护，确保原子化写入。
+        Protected by file lock for atomic writes.
 
         Args:
-            file_path: Path to JSONL file / JSONL 鏂囦欢璺緞
-            items: Items to write / 瑕佸啓鍏ョ殑鏉＄洰鍒楄〃
+            file_path: JSONL文件路径 / Path to JSONL file
+            items: 要写入的条目列表 / Items to write
         """
-        self.ensure_dir(file_path.parent)
+        file_lock = get_file_lock()
+        async with file_lock.lock(file_path):
+            lines = [json.dumps(item, ensure_ascii=False) for item in items]
+            payload = "\n".join(lines) + ("\n" if lines else "")
+            await self._atomic_write(file_path, payload)
 
-        async with aiofiles.open(file_path, 'w', encoding=self.encoding) as f:
-            for item in items:
-                await f.write(json.dumps(item, ensure_ascii=False) + '\n')
-    
     async def read_text(self, file_path: Path) -> str:
         """
-        Read text file / 读取文本文件
-        
+        读取文本文件
+
+        Read text file.
+
         Args:
-            file_path: Path to text file / 文本文件路径
-            
+            file_path: 文本文件路径 / Path to text file
+
         Returns:
-            File content / 文件内容
+            文件内容 / File content
+
+        Raises:
+            FileNotFoundError: 如果文件不存在 / If file not found
         """
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
-        
+
         async with aiofiles.open(file_path, 'r', encoding=self.encoding) as f:
             return await f.read()
-    
+
     async def write_text(self, file_path: Path, content: str) -> None:
         """
-        Write text file / 写入文本文件
-        
+        写入文本文件
+
+        Write text file.
+
         Args:
-            file_path: Path to text file / 文本文件路径
-            content: Content to write / 要写入的内容
+            file_path: 文本文件路径 / Path to text file
+            content: 要写入的内容 / Content to write
         """
-        self.ensure_dir(file_path.parent)
-        
-        async with aiofiles.open(file_path, 'w', encoding=self.encoding) as f:
-            await f.write(content)
+        await self._atomic_write(file_path, content)

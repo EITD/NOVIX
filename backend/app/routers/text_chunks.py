@@ -1,5 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Text chunk search router.
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  文本分块搜索路由 - 提供章节草稿文本分块索引和 BM25 搜索 API。
+  Text chunk search router - Provides text chunk indexing and BM25 search APIs for chapter drafts with filtering and rebuild capabilities.
 """
 
 from typing import Any, Dict, List, Optional
@@ -7,10 +16,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.storage import DraftStorage
+from app.dependencies import get_draft_storage
 
 router = APIRouter(prefix="/projects/{project_id}/text-chunks", tags=["text_chunks"])
-draft_storage = DraftStorage()
+draft_storage = get_draft_storage()
 
 
 class TextChunkSearchRequest(BaseModel):

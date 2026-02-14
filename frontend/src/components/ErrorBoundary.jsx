@@ -1,8 +1,36 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   错误边界组件 - 捕获 React 组件树的错误并显示降级界面
+ *   Error boundary component for catching React errors with fallback UI.
+ */
+
 import React from 'react';
+import logger from '../utils/logger';
 
 /**
- * ErrorBoundary - 错误边界组件
- * 捕获 React 组件错误并显示备用界面。
+ * 错误边界组件 - React 组件错误捕获与降级处理
+ *
+ * Error boundary class component that catches JavaScript errors anywhere
+ * in the child component tree and displays a fallback UI with error details
+ * and recovery options.
+ *
+ * @component
+ * @example
+ * return (
+ *   <ErrorBoundary>
+ *     <YourComponent />
+ *   </ErrorBoundary>
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {React.ReactNode} [props.children] - 子组件 / Child components to protect
+ * @returns {JSX.Element} 错误边界或子组件 / Error boundary or child components
  */
 class ErrorBoundary extends React.Component {
     constructor(props) {
@@ -14,14 +42,20 @@ class ErrorBoundary extends React.Component {
         };
     }
 
+    /**
+     * 当子组件抛出错误时更新状态以展示降级界面
+     * Update state when child component throws error to show fallback UI
+     */
     static getDerivedStateFromError(error) {
-        // 更新状态以展示降级界面
         return { hasError: true };
     }
 
+    /**
+     * 记录错误详情到日志系统
+     * Log error details to logging system for debugging
+     */
     componentDidCatch(error, errorInfo) {
-        // 记录错误详情
-        console.error('[ErrorBoundary] Component error:', error, errorInfo);
+        logger.error('[ErrorBoundary] Component error:', error, errorInfo);
 
         this.setState({
             error,
@@ -29,13 +63,20 @@ class ErrorBoundary extends React.Component {
         });
 
         // 可选：上报监控服务（如 Sentry）
+        // Optional: Report to monitoring service (e.g., Sentry)
         // reportErrorToService(error, errorInfo);
     }
 
+    /**
+     * 处理页面重新加载 / Handle page reload
+     */
     handleReload = () => {
         window.location.reload();
     };
 
+    /**
+     * 重置错误状态 / Reset error state
+     */
     handleReset = () => {
         this.setState({
             hasError: false,

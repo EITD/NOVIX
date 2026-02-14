@@ -1,3 +1,11 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ */
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import useSWR from 'swr';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,93 +26,47 @@ import { buildLineDiff, applyDiffOpsWithDecisions } from '../lib/diffUtils';
 import DiffReviewView from '../components/ide/DiffReviewView';
 import SaveMenu from '../components/writing/SaveMenu';
 import FanfictionView from './FanfictionView';
-
-// Helper fetcher
-const fetchChapterContent = async ([_, projectId, chapter]) => {
-    try {
-        // 1. Try to get Final Draft
-        const resp = await draftsAPI.getFinal(projectId, chapter);
-        return resp.data?.content || '';
-    } catch (e) {
-        // If final not found (404), try to get latest version
-        try {
-            const versionsResp = await draftsAPI.listVersions(projectId, chapter);
-            const versions = versionsResp.data || [];
-            if (versions.length > 0) {
-                const latestVer = versions[versions.length - 1];
-                const draftResp = await draftsAPI.getDraft(projectId, chapter, latestVer);
-                return draftResp.data?.content || '';
-            }
-        } catch (vErr) {
-            console.log('No drafts found, starting fresh.');
-        }
-    }
-    return '';
-};
-
-const countChars = (text) => (text || '').replace(/\s/g, '').length;
-
-const extractToConfirmKeys = (text) => {
-    const keys = [];
-    const content = String(text || '');
-    const regex = /\[TO_CONFIRM:([^\]]+)\]/g;
-    let match = null;
-    while ((match = regex.exec(content)) !== null) {
-        const key = String(match[1] || '').trim();
-        if (key && !keys.includes(key)) {
-            keys.push(key);
-        }
-        if (keys.length >= 12) break;
-    }
-    return keys;
-};
-
-const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const getSelectionStats = (text, start, end) => {
-    const safeText = text || '';
-    const safeStart = Math.max(0, Math.min(start || 0, safeText.length));
-    const safeEnd = Math.max(0, Math.min(end || 0, safeText.length));
-    const selection = safeText.slice(Math.min(safeStart, safeEnd), Math.max(safeStart, safeEnd));
-    return {
-        selectionCount: countChars(selection),
-        cursorText: safeText.slice(0, safeStart)
-    };
-};
-
-const normalizeStars = (value) => {
-    const parsed = parseInt(value, 10);
-    if (Number.isNaN(parsed)) return 1;
-    return Math.max(1, Math.min(parsed, 3));
-};
-
-const parseListInput = (value) => {
-    return String(value || '')
-        .split(/[,，;；\n]/)
-        .map((item) => item.trim())
-        .filter(Boolean);
-};
-
-const formatListInput = (value) => {
-    if (Array.isArray(value)) return value.filter(Boolean).join('，');
-    return value || '';
-};
-
-const formatRulesInput = (value) => {
-    if (Array.isArray(value)) return value.filter(Boolean).join('\n');
-    return value || '';
-};
+import logger from '../utils/logger';
+import {
+    fetchChapterContent,
+    countChars,
+    extractToConfirmKeys,
+    escapeRegExp,
+    getSelectionStats,
+    normalizeStars,
+    parseListInput,
+    formatListInput,
+    formatRulesInput,
+    hasDeletionIntent,
+    stabilizeRevisionTail,
+} from '../utils/writingSessionHelpers';
 
 /**
- * WritingSessionContent - 写作主流程容器
- * 负责会话状态与编辑区渲染，不改变业务逻辑。
+ * WritingSessionContent - 写作会话主流程组件
+ *
+ * 统一的写作 IDE 界面，集成 AI 写作、编辑、分析等功能。
+ * 使用 IDE Layout 提供三段式布局（活动栏、左侧面板、编辑区、右侧面板、底部状态栏）。
+ *
+ * 主要功能：
+ * - 实时 WebSocket 连接管理和消息处理
+ * - 章节内容编辑和版本管理
+ * - AI 驱动的写作、编辑、分析建议
+ * - 交互式对话和反馈流程
+ * - 草稿保存和历史记录
+ *
+ * @component
+ * @param {boolean} [isEmbedded=false] - 是否为嵌入模式（默认完整模式）
+ * @returns {JSX.Element} 写作会话主界面
  */
 function WritingSessionContent({ isEmbedded = false }) {
     const { projectId } = useParams();
     const navigate = useNavigate();
     const { state, dispatch } = useIDE();
 
-    // 加载项目数据
+    // ========================================================================
+    // 项目和会话基本信息 / Project and Session Information
+    // ========================================================================
+    // 项目数据状态 / Project data from API
     const [project, setProject] = useState(null);
     useEffect(() => {
         if (projectId) {
@@ -138,18 +100,23 @@ function WritingSessionContent({ isEmbedded = false }) {
     const [progressEventsByChapter, setProgressEventsByChapter] = useState({});
     const [currentDraft, setCurrentDraft] = useState(null);
     const [manualContent, setManualContent] = useState(''); // Textarea content
+    const [manualContentByChapter, setManualContentByChapter] = useState({});
+    const [selectionInfo, setSelectionInfo] = useState({ start: 0, end: 0, text: '' });
+    const [attachedSelection, setAttachedSelection] = useState(null); // { start, end, text }
+    const [editScope, setEditScope] = useState('document'); // document | selection
     const [sceneBrief, setSceneBrief] = useState(null);
     const [draftV1, setDraftV1] = useState(null);
     const [feedback, setFeedback] = useState('');
     const [diffReview, setDiffReview] = useState(null);
     const [diffDecisions, setDiffDecisions] = useState({});
     const lastFeedbackRef = useRef('');
-    const lastGeneratedRef = useRef(false);
-    const streamBufferRef = useRef('');
-    const streamTextRef = useRef('');
-    const streamFlushRafRef = useRef(null);
+    const lastGeneratedByChapterRef = useRef({});
+    const streamBufferByChapterRef = useRef({});
+    const streamTextByChapterRef = useRef({});
+    const streamFlushRafByChapterRef = useRef({});
     const serverStreamActiveRef = useRef(false);
     const serverStreamUsedRef = useRef(false);
+    const streamingChapterKeyRef = useRef(null);
 
     const [showPreWriteDialog, setShowPreWriteDialog] = useState(false);
     const [preWriteQuestions, setPreWriteQuestions] = useState([]);
@@ -157,6 +124,34 @@ function WritingSessionContent({ isEmbedded = false }) {
 
     const [showToConfirmDialog, setShowToConfirmDialog] = useState(false);
     const [toConfirmQuestions, setToConfirmQuestions] = useState([]);
+
+    const manualContentByChapterRef = useRef(manualContentByChapter);
+    useEffect(() => {
+        manualContentByChapterRef.current = manualContentByChapter;
+    }, [manualContentByChapter]);
+
+    // AI 锁定章：写作/编辑进行中时，右侧面板锁死在该章节（中央可切换查看/手改其他章节）
+    const [aiLockedChapter, setAiLockedChapter] = useState(null);
+    const aiLockedChapterRef = useRef(aiLockedChapter);
+    useEffect(() => {
+        aiLockedChapterRef.current = aiLockedChapter;
+    }, [aiLockedChapter]);
+
+    // 轻提示（不打断、不强跳转）
+    const [notice, setNotice] = useState(null);
+    const noticeTimerRef = useRef(null);
+    const pushNotice = useCallback((text) => {
+        if (!text) return;
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        setNotice({ id, text: String(text) });
+        if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+        noticeTimerRef.current = window.setTimeout(() => setNotice(null), 2600);
+    }, []);
+    useEffect(() => {
+        return () => {
+            if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+        };
+    }, []);
 
     // WebSocket
     const wsRef = useRef(null);
@@ -185,6 +180,11 @@ function WritingSessionContent({ isEmbedded = false }) {
     const NO_CHAPTER_KEY = '__no_chapter__';
     const activeChapterKey = chapterInfo.chapter ? String(chapterInfo.chapter) : NO_CHAPTER_KEY;
 
+    const activeChapterKeyRef = useRef(activeChapterKey);
+    useEffect(() => {
+        activeChapterKeyRef.current = activeChapterKey;
+    }, [activeChapterKey]);
+
 
     // Draft version state
     const [currentDraftVersion, setCurrentDraftVersion] = useState('v1');
@@ -194,17 +194,59 @@ function WritingSessionContent({ isEmbedded = false }) {
     const [contextDebugByChapter, setContextDebugByChapter] = useState({});
     const [editContextMode, setEditContextMode] = useState('quick'); // quick | full
 
-    const canUseWriter = countChars(manualContent) === 0;
+    const agentBusy =
+        Boolean(aiLockedChapter) &&
+        (Boolean(diffReview) ||
+            showPreWriteDialog ||
+            showToConfirmDialog ||
+            status === 'starting' ||
+            status === 'waiting_user_input' ||
+            isGenerating ||
+            streamingState.active);
 
-    const messages = messagesByChapter[activeChapterKey] || [];
-    const progressEvents = progressEventsByChapter[activeChapterKey] || [];
-    const contextDebug = contextDebugByChapter[activeChapterKey] || null;
+    const agentChapterKey = agentBusy
+        ? String(aiLockedChapter)
+        : activeChapterKey;
+
+    const isStreamingForActiveChapter =
+        streamingState.active && streamingChapterKeyRef.current === activeChapterKey;
+
+    const isDiffReviewForActiveChapter =
+        Boolean(diffReview) && String(diffReview?.chapterKey || '') === activeChapterKey;
+
+    const lockedOnActiveChapter =
+        agentBusy && String(aiLockedChapter || '') === activeChapterKey;
+
+    const canUseWriter = countChars(
+        agentBusy
+            ? (manualContentByChapter[String(aiLockedChapter || '')] ?? '')
+            : manualContent
+    ) === 0;
+
+    const messages = messagesByChapter[agentChapterKey] || [];
+    const progressEvents = progressEventsByChapter[agentChapterKey] || [];
+    const contextDebug = contextDebugByChapter[agentChapterKey] || null;
 
     useEffect(() => {
         if (!isGenerating && !canUseWriter && agentMode === 'create') {
             setAgentMode('edit');
         }
     }, [canUseWriter, agentMode, isGenerating]);
+
+    useEffect(() => {
+        if (agentMode !== 'edit') return;
+        if (!attachedSelection?.text?.trim()) {
+            if (editScope === 'selection') setEditScope('document');
+            return;
+        }
+        if (editScope === 'document') setEditScope('selection');
+    }, [agentMode, attachedSelection, editScope]);
+
+    useEffect(() => {
+        if (!aiLockedChapter) return;
+        if (agentBusy) return;
+        setAiLockedChapter(null);
+    }, [aiLockedChapter, agentBusy]);
 
     useEffect(() => {
         if (!projectId) return;
@@ -215,17 +257,25 @@ function WritingSessionContent({ isEmbedded = false }) {
                 const wsChapterKey = data?.chapter ? String(data.chapter) : NO_CHAPTER_KEY;
                 if (data.type === 'start_ack') appendProgressEvent({ stage: 'session_start', message: '会话已启动' }, wsChapterKey);
                 if (data.type === 'stream_start') {
+                    if (wsChapterKey && wsChapterKey !== NO_CHAPTER_KEY) {
+                        setAiLockedChapter(wsChapterKey);
+                    }
+                    streamingChapterKeyRef.current = wsChapterKey;
                     stopStreaming();
                     clearDiffReview();
                     serverStreamActiveRef.current = true;
                     serverStreamUsedRef.current = true;
-                    streamBufferRef.current = '';
-                    streamTextRef.current = '';
-                    if (streamFlushRafRef.current) {
-                        window.cancelAnimationFrame(streamFlushRafRef.current);
-                        streamFlushRafRef.current = null;
+                    streamBufferByChapterRef.current[wsChapterKey] = '';
+                    streamTextByChapterRef.current[wsChapterKey] = '';
+                    if (streamFlushRafByChapterRef.current[wsChapterKey]) {
+                        window.cancelAnimationFrame(streamFlushRafByChapterRef.current[wsChapterKey]);
+                        streamFlushRafByChapterRef.current[wsChapterKey] = null;
                     }
-                    lastGeneratedRef.current = true;
+                    lastGeneratedByChapterRef.current[wsChapterKey] = true;
+                    setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: '' }));
+                    if (activeChapterKeyRef.current === wsChapterKey) {
+                        setManualContent('');
+                    }
                     setIsGenerating(true);
                     setStreamingState({
                         active: true,
@@ -238,32 +288,44 @@ function WritingSessionContent({ isEmbedded = false }) {
                     if (!serverStreamActiveRef.current) {
                         return;
                     }
-                    streamBufferRef.current += data.content;
-                    if (!streamFlushRafRef.current) {
-                        streamFlushRafRef.current = window.requestAnimationFrame(() => {
-                            streamTextRef.current += streamBufferRef.current;
-                            streamBufferRef.current = '';
-                            setManualContent(streamTextRef.current);
-                            const current = streamTextRef.current.length;
-                            setStreamingState(prev => ({
+                    streamBufferByChapterRef.current[wsChapterKey] =
+                        (streamBufferByChapterRef.current[wsChapterKey] || '') + data.content;
+                    if (!streamFlushRafByChapterRef.current[wsChapterKey]) {
+                        streamFlushRafByChapterRef.current[wsChapterKey] = window.requestAnimationFrame(() => {
+                            const buffered = streamBufferByChapterRef.current[wsChapterKey] || '';
+                            const nextText = (streamTextByChapterRef.current[wsChapterKey] || '') + buffered;
+                            streamTextByChapterRef.current[wsChapterKey] = nextText;
+                            streamBufferByChapterRef.current[wsChapterKey] = '';
+                            setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: nextText }));
+                            if (activeChapterKeyRef.current === wsChapterKey) {
+                                setManualContent(nextText);
+                            }
+                            const current = nextText.length;
+                            setStreamingState((prev) => ({
                                 ...prev,
                                 current,
                                 progress: prev.total ? Math.round((current / prev.total) * 100) : prev.progress
                             }));
-                            streamFlushRafRef.current = null;
+                            streamFlushRafByChapterRef.current[wsChapterKey] = null;
                         });
                     }
                 }
                 if (data.type === 'stream_end') {
-                    if (streamFlushRafRef.current) {
-                        window.cancelAnimationFrame(streamFlushRafRef.current);
-                        streamFlushRafRef.current = null;
+                    if (streamFlushRafByChapterRef.current[wsChapterKey]) {
+                        window.cancelAnimationFrame(streamFlushRafByChapterRef.current[wsChapterKey]);
+                        streamFlushRafByChapterRef.current[wsChapterKey] = null;
                     }
-                    streamTextRef.current += streamBufferRef.current;
-                    streamBufferRef.current = '';
-                    const finalText = data.draft?.content || streamTextRef.current;
+                    const buffered = streamBufferByChapterRef.current[wsChapterKey] || '';
+                    const combined = (streamTextByChapterRef.current[wsChapterKey] || '') + buffered;
+                    streamTextByChapterRef.current[wsChapterKey] = combined;
+                    streamBufferByChapterRef.current[wsChapterKey] = '';
+                    const finalText = data.draft?.content || combined;
                     serverStreamActiveRef.current = false;
-                    setManualContent(finalText);
+                    streamingChapterKeyRef.current = null;
+                    setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: finalText }));
+                    if (activeChapterKeyRef.current === wsChapterKey) {
+                        setManualContent(finalText);
+                    }
                     setStreamingState({
                         active: false,
                         progress: 100,
@@ -271,8 +333,12 @@ function WritingSessionContent({ isEmbedded = false }) {
                         total: finalText.length
                     });
                     setIsGenerating(false);
-                    dispatch({ type: 'SET_WORD_COUNT', payload: countChars(finalText) });
-                    dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
+                    if (activeChapterKeyRef.current === wsChapterKey) {
+                        dispatch({ type: 'SET_WORD_COUNT', payload: countChars(finalText) });
+                        dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
+                    } else {
+                        pushNotice(`第 ${wsChapterKey} 章撰写完成，可切换查看。`);
+                    }
                     if (data.draft) {
                         setCurrentDraft(data.draft);
                         setCurrentDraftVersion(data.draft.version || currentDraftVersion);
@@ -293,7 +359,11 @@ function WritingSessionContent({ isEmbedded = false }) {
                                 reason: '正文中存在 [TO_CONFIRM] 标记；确认后将直接替换到正文对应位置。',
                             }))
                         );
-                        setShowToConfirmDialog(true);
+                        if (activeChapterKeyRef.current === wsChapterKey) {
+                            setShowToConfirmDialog(true);
+                        } else {
+                            pushNotice(`第 ${wsChapterKey} 章有待确认信息，请切换回该章节处理。`);
+                        }
                     }
                 }
                 if (data.type === 'scene_brief') handleSceneBrief(data.data, wsChapterKey);
@@ -403,30 +473,48 @@ function WritingSessionContent({ isEmbedded = false }) {
         { revalidateOnFocus: false }
     );
 
+    const memoryPackChapter = agentBusy ? aiLockedChapter : chapterInfo.chapter;
     const { data: memoryPackStatus } = useSWR(
-        projectId && chapterInfo.chapter ? ['memory-pack', projectId, chapterInfo.chapter] : null,
-        () => memoryPackAPI.getStatus(projectId, chapterInfo.chapter).then(res => res.data),
+        projectId && memoryPackChapter ? ['memory-pack', projectId, memoryPackChapter] : null,
+        () => memoryPackAPI.getStatus(projectId, memoryPackChapter).then(res => res.data),
         { revalidateOnFocus: false, refreshInterval: 5000 }
     );
 
     // Sync SWR data to manualContent
     useEffect(() => {
-        if (loadedContent === undefined || streamingState.active || state.unsavedChanges) {
+        if (loadedContent === undefined || state.unsavedChanges) {
+            return;
+        }
+        if (isStreamingForActiveChapter || lockedOnActiveChapter || isDiffReviewForActiveChapter) {
             return;
         }
 
-        if (lastGeneratedRef.current && manualContent && !(loadedContent || '').trim()) {
+        const chapterKey = activeChapterKey;
+        if (chapterKey === NO_CHAPTER_KEY) return;
+
+        const lastGeneratedForChapter = Boolean(lastGeneratedByChapterRef.current?.[chapterKey]);
+        if (lastGeneratedForChapter && manualContent && !(loadedContent || '').trim()) {
             return;
         }
 
+        setManualContentByChapter((prev) => ({ ...(prev || {}), [chapterKey]: loadedContent }));
         setManualContent(loadedContent);
         dispatch({ type: 'SET_WORD_COUNT', payload: countChars(loadedContent) });
         dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
-        lastGeneratedRef.current = false;
+        lastGeneratedByChapterRef.current[chapterKey] = false;
         // Only center cursor if we just switched chapters (optional optimization)
         // dispatch({ type: 'SET_CURSOR_POSITION', payload: { line: 1, column: 1 } });
-    }, [loadedContent, dispatch, streamingState.active, manualContent, state.unsavedChanges]);
-
+    }, [
+        loadedContent,
+        dispatch,
+        manualContent,
+        state.unsavedChanges,
+        activeChapterKey,
+        NO_CHAPTER_KEY,
+        isStreamingForActiveChapter,
+        lockedOnActiveChapter,
+        isDiffReviewForActiveChapter,
+    ]);
 
     useEffect(() => {
         loadChapters();
@@ -467,16 +555,49 @@ function WritingSessionContent({ isEmbedded = false }) {
             const list = resp.data || [];
             setChapters(list);
         } catch (e) {
-            console.error('Failed to load chapters:', e);
+            logger.error('Failed to load chapters:', e);
         }
     };
 
     const handleChapterSelect = async (chapter, presetTitle = '') => {
+        const nextChapterKey = chapter ? String(chapter) : NO_CHAPTER_KEY;
+        const lockedKey = aiLockedChapterRef.current ? String(aiLockedChapterRef.current) : null;
+        const preserveAgent = Boolean(lockedKey) && agentBusy;
+
+        // 缓存当前章节内容，避免切章丢失
+        if (chapterInfo.chapter) {
+            const currentKey = String(chapterInfo.chapter);
+            setManualContentByChapter((prev) => ({ ...(prev || {}), [currentKey]: manualContent }));
+        }
+
+        // 非写作/编辑进行中：切章时清理流式与差异态
+        if (!preserveAgent) {
+            stopStreaming();
+            clearDiffReview();
+            setStatus('editing');
+        } else if (lockedKey && nextChapterKey !== lockedKey) {
+            pushNotice(`正在撰写第 ${lockedKey} 章，AI 面板已锁定；已切换查看第 ${nextChapterKey} 章。`);
+        }
+
         // Just set the chapter, let SWR handle fetching
-        stopStreaming();
-        clearDiffReview();
         setChapterInfo({ chapter, chapter_title: presetTitle || '', content: '' }); // content will be filled by SWR
-        setStatus('editing');
+        setSelectionInfo({ start: 0, end: 0, text: '' });
+        setAttachedSelection(null);
+        setEditScope('document');
+
+        // 优先使用本地缓存，减少切章时的“空白闪烁”
+        if (nextChapterKey && nextChapterKey !== NO_CHAPTER_KEY) {
+            const cached = manualContentByChapterRef.current?.[nextChapterKey];
+            if (typeof cached === 'string') {
+                setManualContent(cached);
+                dispatch({ type: 'SET_WORD_COUNT', payload: countChars(cached) });
+                dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
+            } else {
+                setManualContent('');
+                dispatch({ type: 'SET_WORD_COUNT', payload: 0 });
+                dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
+            }
+        }
         try {
             const summaryResp = await draftsAPI.getSummary(projectId, chapter);
             const summary = summaryResp.data || {};
@@ -532,7 +653,7 @@ function WritingSessionContent({ isEmbedded = false }) {
         await loadChapters();
     };
 
-    const addMessage = (type, content, chapterOverride = null) => {
+    const addMessage = useCallback((type, content, chapterOverride = null) => {
         const key = chapterOverride ? String(chapterOverride) : activeChapterKey;
         if (!key || key === NO_CHAPTER_KEY) {
             return;
@@ -543,7 +664,7 @@ function WritingSessionContent({ isEmbedded = false }) {
             next[key] = [...existing, { type, content, time: new Date() }].slice(-200);
             return next;
         });
-    };
+    }, [activeChapterKey, NO_CHAPTER_KEY]);
 
     const appendProgressEvent = useCallback((partial, chapterOverride = null) => {
         const key = chapterOverride ? String(chapterOverride) : activeChapterKey;
@@ -562,6 +683,70 @@ function WritingSessionContent({ isEmbedded = false }) {
             return next;
         });
     }, [activeChapterKey, NO_CHAPTER_KEY]);
+
+    // Auto Save（类似 VSCode：检测到变更后自动保存）
+    const autosaveTimerRef = useRef(null);
+    const autosaveInFlightRef = useRef(false);
+    const autosaveLastPayloadRef = useRef({ chapter: null, content: null, title: null });
+
+    useEffect(() => {
+        if (!state.unsavedChanges) return;
+        if (!projectId || !chapterInfo.chapter) return;
+        if (isStreamingForActiveChapter || lockedOnActiveChapter || isDiffReviewForActiveChapter) return;
+
+        const nextContent = String(manualContent || '');
+        const nextTitle = String(chapterInfo.chapter_title || '').trim() || null;
+
+        const last = autosaveLastPayloadRef.current || {};
+        const sameChapter = String(last.chapter || '') === String(chapterInfo.chapter);
+        const sameContent = sameChapter && String(last.content || '') === nextContent;
+        const sameTitle = sameChapter && (last.title || null) === nextTitle;
+        if (sameContent && sameTitle) return;
+
+        if (autosaveTimerRef.current) {
+            window.clearTimeout(autosaveTimerRef.current);
+        }
+
+        autosaveTimerRef.current = window.setTimeout(async () => {
+            if (autosaveInFlightRef.current) return;
+            autosaveInFlightRef.current = true;
+            try {
+                const payload = { content: nextContent };
+                if (nextTitle) payload.title = nextTitle;
+
+                const resp = await draftsAPI.autosaveContent(projectId, chapterInfo.chapter, payload);
+                if (resp.data?.success) {
+                    autosaveLastPayloadRef.current = { chapter: chapterInfo.chapter, content: nextContent, title: nextTitle };
+                    await mutateChapter(nextContent, false);
+                    dispatch({ type: 'SET_AUTOSAVED' });
+                }
+            } catch (e) {
+                dispatch({ type: 'SET_UNSAVED' });
+                addMessage('error', '自动保存失败: ' + (e.response?.data?.detail || e.message));
+            } finally {
+                autosaveInFlightRef.current = false;
+            }
+        }, 1200);
+
+        return () => {
+            if (autosaveTimerRef.current) {
+                window.clearTimeout(autosaveTimerRef.current);
+                autosaveTimerRef.current = null;
+            }
+        };
+    }, [
+        state.unsavedChanges,
+        projectId,
+        chapterInfo.chapter,
+        chapterInfo.chapter_title,
+        manualContent,
+        isStreamingForActiveChapter,
+        lockedOnActiveChapter,
+        isDiffReviewForActiveChapter,
+        mutateChapter,
+        dispatch,
+        addMessage,
+    ]);
 
     const clearDiffReview = useCallback(() => {
         setDiffReview(null);
@@ -593,17 +778,24 @@ function WritingSessionContent({ isEmbedded = false }) {
     }, [clearDiffReview, state.activeDocument, stopStreaming]);
 
     const startStreamingDraft = useCallback((targetText, options = {}) => {
-        const { onComplete } = options;
+        const { onComplete, chapterKey } = options;
+        const resolvedChapterKey = chapterKey ? String(chapterKey) : activeChapterKeyRef.current;
         stopStreaming();
+        streamingChapterKeyRef.current = resolvedChapterKey;
 
         const safeText = targetText || '';
         if (!safeText) {
-        setManualContent('');
-        setIsGenerating(false);
-        onComplete?.();
-        return;
+            setManualContentByChapter((prev) => ({ ...(prev || {}), [resolvedChapterKey]: '' }));
+            if (activeChapterKeyRef.current === resolvedChapterKey) {
+                setManualContent('');
+            }
+            setIsGenerating(false);
+            streamingChapterKeyRef.current = null;
+            onComplete?.();
+            return;
         }
 
+        dispatch({ type: 'SET_UNSAVED' });
         setIsGenerating(true);
         const total = safeText.length;
         const charsPerSecond = Math.min(420, Math.max(180, Math.round(total / 3)));
@@ -611,19 +803,26 @@ function WritingSessionContent({ isEmbedded = false }) {
         let lastTs = performance.now();
         let rafId = null;
 
-        setManualContent('');
+        setManualContentByChapter((prev) => ({ ...(prev || {}), [resolvedChapterKey]: '' }));
+        if (activeChapterKeyRef.current === resolvedChapterKey) {
+            setManualContent('');
+        }
         setStreamingState({
             active: true,
             progress: 0,
             current: 0,
             total
         });
-        lastGeneratedRef.current = true;
+        lastGeneratedByChapterRef.current[resolvedChapterKey] = true;
 
         const initialBurst = Math.min(total, Math.max(12, Math.floor(total * 0.03)));
         if (initialBurst > 0) {
             index = initialBurst;
-            setManualContent(safeText.slice(0, index));
+            const burstText = safeText.slice(0, index);
+            setManualContentByChapter((prev) => ({ ...(prev || {}), [resolvedChapterKey]: burstText }));
+            if (activeChapterKeyRef.current === resolvedChapterKey) {
+                setManualContent(burstText);
+            }
             setStreamingState({
                 active: index < total,
                 progress: Math.round((index / total) * 100),
@@ -638,7 +837,11 @@ function WritingSessionContent({ isEmbedded = false }) {
             index = Math.min(total, index + increment);
             lastTs = ts;
 
-            setManualContent(safeText.slice(0, index));
+            const partial = safeText.slice(0, index);
+            setManualContentByChapter((prev) => ({ ...(prev || {}), [resolvedChapterKey]: partial }));
+            if (activeChapterKeyRef.current === resolvedChapterKey) {
+                setManualContent(partial);
+            }
             setStreamingState({
                 active: index < total,
                 progress: Math.round((index / total) * 100),
@@ -649,8 +852,13 @@ function WritingSessionContent({ isEmbedded = false }) {
             if (index >= total) {
                 streamingRef.current = null;
                 setIsGenerating(false);
-                dispatch({ type: 'SET_WORD_COUNT', payload: countChars(safeText) });
-                dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
+                streamingChapterKeyRef.current = null;
+                if (activeChapterKeyRef.current === resolvedChapterKey) {
+                    dispatch({ type: 'SET_WORD_COUNT', payload: countChars(safeText) });
+                    dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
+                } else {
+                    pushNotice(`第 ${resolvedChapterKey} 章撰写完成，可切换查看。`);
+                }
                 onComplete?.();
                 return;
             }
@@ -664,7 +872,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                 if (rafId) window.cancelAnimationFrame(rafId);
             }
         };
-    }, [dispatch, stopStreaming]);
+    }, [dispatch, stopStreaming, pushNotice]);
 
     useEffect(() => {
         return () => {
@@ -677,8 +885,6 @@ function WritingSessionContent({ isEmbedded = false }) {
         if (!state.activeDocument) return;
 
         if (state.activeDocument.type === 'chapter' && state.activeDocument.id) {
-            stopStreaming();
-            clearDiffReview();
             setActiveCard(null); // Clear card state
             const presetTitle =
                 state.activeDocument.data?.title ||
@@ -734,7 +940,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                         immutable: fullData.immutable === true ? 'true' : fullData.immutable === false ? 'false' : 'unset'
                     });
                 } catch (e) {
-                    console.error("Failed to fetch card details", e);
+                    logger.error("Failed to fetch card details", e);
                     addMessage('error', '加载卡片详情失败: ' + e.message);
                 }
             };
@@ -752,6 +958,14 @@ function WritingSessionContent({ isEmbedded = false }) {
             return;
         }
         const chapterKey = String(chapter);
+        setAiLockedChapter(chapterKey);
+        setManualContentByChapter((prev) => {
+            const next = { ...(prev || {}) };
+            if (next[chapterKey] === undefined) {
+                next[chapterKey] = manualContent;
+            }
+            return next;
+        });
 
         stopStreaming();
         clearDiffReview();
@@ -808,7 +1022,7 @@ function WritingSessionContent({ isEmbedded = false }) {
             if (finalDraft && shouldUseHttpDraft) {
                 setCurrentDraft(finalDraft);
                 setCurrentDraftVersion(result.draft_v2 ? 'v2' : 'v1');
-                startStreamingDraft(finalDraft.content || '');
+                startStreamingDraft(finalDraft.content || '', { chapterKey });
             } else if (shouldUseHttpDraft) {
                 setIsGenerating(false);
             }
@@ -832,6 +1046,9 @@ function WritingSessionContent({ isEmbedded = false }) {
         if (!pendingStartPayload) return;
         const startPayload = pendingStartPayload;
         const chapterKey = startPayload?.chapter ? String(startPayload.chapter) : activeChapterKey;
+        if (chapterKey && chapterKey !== NO_CHAPTER_KEY) {
+            setAiLockedChapter(chapterKey);
+        }
         setShowPreWriteDialog(false);
         stopStreaming();
         clearDiffReview();
@@ -878,7 +1095,7 @@ function WritingSessionContent({ isEmbedded = false }) {
             if (finalDraft && shouldUseHttpDraft) {
                 setCurrentDraft(finalDraft);
                 setCurrentDraftVersion(result.draft_v2 ? 'v2' : 'v1');
-                startStreamingDraft(finalDraft.content || '');
+                startStreamingDraft(finalDraft.content || '', { chapterKey });
             } else if (shouldUseHttpDraft) {
                 setIsGenerating(false);
             }
@@ -914,7 +1131,12 @@ function WritingSessionContent({ isEmbedded = false }) {
         }
         setDraftV1(data);
         clearDiffReview();
+        const chapterKey = chapterOverride ? String(chapterOverride) : activeChapterKeyRef.current;
+        if (chapterKey && chapterKey !== NO_CHAPTER_KEY) {
+            setAiLockedChapter(chapterKey);
+        }
         startStreamingDraft(data.content || '', {
+            chapterKey,
             onComplete: () => {
                 const keys = extractToConfirmKeys(data?.content || '');
                 if (keys.length > 0) {
@@ -926,7 +1148,11 @@ function WritingSessionContent({ isEmbedded = false }) {
                             reason: '正文中存在 [TO_CONFIRM] 标记；确认后将直接替换到正文对应位置。',
                         }))
                     );
-                    setShowToConfirmDialog(true);
+                    if (activeChapterKeyRef.current === chapterKey) {
+                        setShowToConfirmDialog(true);
+                    } else {
+                        pushNotice(`第 ${chapterKey} 章有待确认信息，请切换回该章节处理。`);
+                    }
                 }
             }
         });
@@ -940,7 +1166,12 @@ function WritingSessionContent({ isEmbedded = false }) {
         }
         setCurrentDraft(data);
         clearDiffReview();
+        const chapterKey = chapterOverride ? String(chapterOverride) : activeChapterKeyRef.current;
+        if (chapterKey && chapterKey !== NO_CHAPTER_KEY) {
+            setAiLockedChapter(chapterKey);
+        }
         startStreamingDraft(data.content || '', {
+            chapterKey,
             onComplete: () => {
                 const keys = extractToConfirmKeys(data?.content || '');
                 if (keys.length > 0) {
@@ -952,7 +1183,11 @@ function WritingSessionContent({ isEmbedded = false }) {
                             reason: '正文中存在 [TO_CONFIRM] 标记；确认后将直接替换到正文对应位置。',
                         }))
                     );
-                    setShowToConfirmDialog(true);
+                    if (activeChapterKeyRef.current === chapterKey) {
+                        setShowToConfirmDialog(true);
+                    } else {
+                        pushNotice(`第 ${chapterKey} 章有待确认信息，请切换回该章节处理。`);
+                    }
                 }
             }
         });
@@ -981,6 +1216,10 @@ function WritingSessionContent({ isEmbedded = false }) {
             dispatch({ type: 'SET_UNSAVED' });
         }
         setManualContent(nextText);
+        if (chapterInfo.chapter) {
+            const key = String(chapterInfo.chapter);
+            setManualContentByChapter((prev) => ({ ...(prev || {}), [key]: nextText }));
+        }
         dispatch({ type: 'SET_WORD_COUNT', payload: countChars(nextText) });
         dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
         setShowToConfirmDialog(false);
@@ -992,7 +1231,12 @@ function WritingSessionContent({ isEmbedded = false }) {
         if (!textToSubmit?.trim()) return;
 
         try {
-            const baseContent = manualContent || '';
+            const normalizeLineEndings = (text) => String(text || '').replace(/\r\n/g, '\n');
+            const baseContent = normalizeLineEndings(manualContent);
+            const chapterKey = chapterInfo.chapter ? String(chapterInfo.chapter) : activeChapterKey;
+            if (chapterKey && chapterKey !== NO_CHAPTER_KEY) {
+                setAiLockedChapter(chapterKey);
+            }
             setIsGenerating(true);
             setStatus('editing');
 
@@ -1006,37 +1250,64 @@ function WritingSessionContent({ isEmbedded = false }) {
             appendProgressEvent({ stage: 'edit_suggest', message: '正在生成差异修改建议…' });
             setFeedback('');
 
-            const resp = await sessionAPI.suggestEdit(projectId, {
+            const payload = {
                 chapter: chapterInfo.chapter ? String(chapterInfo.chapter) : null,
                 content: baseContent,
                 instruction: textToSubmit,
                 context_mode: editContextMode,
-            });
+            };
+
+            if (editScope === 'selection' && attachedSelection?.text?.trim()) {
+                const baseSelection = attachedSelection?.text?.trim() ? attachedSelection : null;
+                if (baseSelection) {
+                    const selectionText = String(baseSelection.text || '');
+                    const selectionStart = Math.max(0, Math.min(Number(baseSelection.start || 0), baseContent.length));
+                    const selectionEnd = Math.max(0, Math.min(Number(baseSelection.end || 0), baseContent.length));
+                    payload.selection_text = selectionText;
+                    payload.selection_start = Math.min(selectionStart, selectionEnd);
+                    payload.selection_end = Math.max(selectionStart, selectionEnd);
+                }
+            }
+
+            const resp = await sessionAPI.suggestEdit(projectId, payload);
 
             const result = resp.data;
             if (result.success) {
-                appendProgressEvent({ stage: 'edit_suggest_done', message: '差异修改建议已生成（可审阅差异块）' });
-                const nextContent = result.revised_content || '';
-                if (baseContent !== nextContent) {
-                    const diff = buildLineDiff(baseContent, nextContent, { contextLines: 2 });
-                    const hunksWithReason = diff.hunks.map((hunk) => ({
-                        ...hunk,
-                        reason: lastFeedbackRef.current || '根据用户指令进行调整'
-                    }));
-                    const initialDecisions = hunksWithReason.reduce((acc, hunk) => {
-                        acc[hunk.id] = 'accepted';
-                        return acc;
-                    }, {});
-                    setDiffDecisions(initialDecisions);
-                    setDiffReview({
-                        ...diff,
-                        hunks: hunksWithReason,
-                        originalContent: baseContent,
-                        revisedContent: nextContent,
-                    });
-                } else {
-                    addMessage('assistant', '未检测到需要修改的差异。');
+                let nextContent = normalizeLineEndings(result.revised_content);
+                const tailFix = stabilizeRevisionTail(baseContent, nextContent, textToSubmit);
+                if (tailFix.applied) {
+                    nextContent = normalizeLineEndings(tailFix.text);
+                    addMessage('system', '检测到修改建议疑似截断，已自动补齐原文末尾，请检查差异。');
                 }
+
+                const diff = buildLineDiff(baseContent, nextContent, { contextLines: 2 });
+                const hasChanges = Boolean((diff.stats?.additions || 0) + (diff.stats?.deletions || 0));
+
+                if (!hasChanges) {
+                    throw new Error('未能生成可应用的差异修改：请复制粘贴要修改的原句/段落，或使用“选区编辑”进行精确定位。');
+                }
+
+                appendProgressEvent({
+                    stage: 'edit_suggest_done',
+                    message: `差异修改建议已生成（${diff.stats.additions || 0} 新增 / ${diff.stats.deletions || 0} 删除）`
+                });
+
+                const hunksWithReason = (diff.hunks || []).map((hunk) => ({
+                    ...hunk,
+                    reason: lastFeedbackRef.current || '根据用户指令进行调整'
+                }));
+                const initialDecisions = hunksWithReason.reduce((acc, hunk) => {
+                    acc[hunk.id] = 'accepted';
+                    return acc;
+                }, {});
+                setDiffDecisions(initialDecisions);
+                setDiffReview({
+                    ...diff,
+                    hunks: hunksWithReason,
+                    originalContent: baseContent,
+                    revisedContent: nextContent,
+                    chapterKey,
+                });
                 setStatus('waiting_feedback');
                 addMessage('assistant', '已生成差异修改建议：可查看差异并选择“接受”或“撤销”。');
             } else {
@@ -1058,6 +1329,10 @@ function WritingSessionContent({ isEmbedded = false }) {
             dispatch({ type: 'SET_UNSAVED' });
         }
         setManualContent(nextContent);
+        if (diffReview.chapterKey) {
+            const key = String(diffReview.chapterKey);
+            setManualContentByChapter((prev) => ({ ...(prev || {}), [key]: nextContent }));
+        }
         dispatch({ type: 'SET_WORD_COUNT', payload: countChars(nextContent) });
         dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
         clearDiffReview();
@@ -1070,17 +1345,31 @@ function WritingSessionContent({ isEmbedded = false }) {
             dispatch({ type: 'SET_UNSAVED' });
         }
         setManualContent(nextContent);
+        if (diffReview.chapterKey) {
+            const key = String(diffReview.chapterKey);
+            setManualContentByChapter((prev) => ({ ...(prev || {}), [key]: nextContent }));
+        }
         dispatch({ type: 'SET_WORD_COUNT', payload: countChars(nextContent) });
         dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
         clearDiffReview();
     };
 
     const handleAcceptDiffHunk = (hunkId) => {
-        setDiffDecisions((prev) => ({ ...prev, [hunkId]: 'accepted' }));
+        setDiffDecisions((prev) => {
+            const next = { ...(prev || {}) };
+            const current = next[hunkId];
+            next[hunkId] = current === 'accepted' ? 'pending' : 'accepted';
+            return next;
+        });
     };
 
     const handleRejectDiffHunk = (hunkId) => {
-        setDiffDecisions((prev) => ({ ...prev, [hunkId]: 'rejected' }));
+        setDiffDecisions((prev) => {
+            const next = { ...(prev || {}) };
+            const current = next[hunkId];
+            next[hunkId] = current === 'rejected' ? 'pending' : 'rejected';
+            return next;
+        });
     };
 
     const handleApplySelectedDiff = () => {
@@ -1095,6 +1384,10 @@ function WritingSessionContent({ isEmbedded = false }) {
             dispatch({ type: 'SET_UNSAVED' });
         }
         setManualContent(nextContent);
+        if (diffReview.chapterKey) {
+            const key = String(diffReview.chapterKey);
+            setManualContentByChapter((prev) => ({ ...(prev || {}), [key]: nextContent }));
+        }
         dispatch({ type: 'SET_WORD_COUNT', payload: countChars(nextContent) });
         dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
         clearDiffReview();
@@ -1272,7 +1565,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                     });
                 }
             } catch (error) {
-                console.error('Failed to refresh card data', error);
+                logger.error('Failed to refresh card data', error);
             }
             addMessage('system', '卡片已更新');
             dispatch({ type: 'SET_SAVED' });
@@ -1463,52 +1756,43 @@ function WritingSessionContent({ isEmbedded = false }) {
                                 disabled={!chapterInfo.chapter}
                             />
                         </div>
-                        {diffReview && diffReview.hunks?.length > 0 && (
-                            <div className="mb-4 space-y-2">
-                                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2">
-                                    请先处理编辑修改建议，再继续手动编辑。
-                                </div>
+                        <div className="flex-1 overflow-hidden bg-[var(--vscode-bg)] border-t border-[var(--vscode-sidebar-border)]">
+                            {isDiffReviewForActiveChapter ? (
                                 <DiffReviewView
                                     ops={diffReview.ops}
                                     hunks={diffReview.hunks}
                                     stats={diffReview.stats}
                                     decisions={diffDecisions}
-                                    onAcceptAll={handleAcceptAllDiff}
-                                    onRejectAll={handleRejectAllDiff}
                                     onAcceptHunk={handleAcceptDiffHunk}
                                     onRejectHunk={handleRejectDiffHunk}
                                     originalVersion="当前正文"
                                     revisedVersion="修改建议"
                                 />
-                                <div className="flex items-center justify-end gap-2 pt-1">
-                                    <Button size="sm" className="shadow-sm" onClick={handleApplySelectedDiff}>
-                                        应用已接受修改
-                                    </Button>
-                                </div>
-                                <div className="text-[11px] text-ink-400">
-                                    可逐块接受/拒绝后点击“应用已接受修改”，或直接“接受全部/拒绝全部”。
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="flex-1 overflow-hidden bg-[var(--vscode-bg)] border-t border-[var(--vscode-sidebar-border)]">
-                            {streamingState.active ? (
+                            ) : isStreamingForActiveChapter ? (
                                 <StreamingDraftView
                                     content={manualContent}
-                                    progress={streamingState.progress}
-                                    active={streamingState.active}
+                                    active={isStreamingForActiveChapter}
                                     className="h-full"
                                 />
                             ) : (
                                 <textarea
-                                    className="h-full w-full resize-none border-none outline-none bg-transparent p-6 text-base font-serif text-ink-900 leading-relaxed focus:ring-0 placeholder:text-ink-300 overflow-y-auto"
+                                    className="h-full w-full resize-none border-none outline-none bg-transparent p-6 text-base font-serif text-ink-900 leading-relaxed focus:ring-0 placeholder:text-ink-300 overflow-y-auto editor-scrollbar"
                                     value={manualContent}
                                     onChange={(e) => {
                                         const nextValue = e.target.value;
                                         setManualContent(nextValue);
+                                        if (chapterInfo.chapter) {
+                                            const key = String(chapterInfo.chapter);
+                                            setManualContentByChapter((prev) => ({ ...(prev || {}), [key]: nextValue }));
+                                        }
                                         dispatch({ type: 'SET_WORD_COUNT', payload: countChars(nextValue) });
                                         const stats = getSelectionStats(nextValue, e.target.selectionStart, e.target.selectionEnd);
                                         dispatch({ type: 'SET_SELECTION_COUNT', payload: stats.selectionCount });
+                                        setSelectionInfo({
+                                            start: stats.selectionStart,
+                                            end: stats.selectionEnd,
+                                            text: stats.selectionText || '',
+                                        });
                                         const lines = stats.cursorText.split('\n');
                                         dispatch({
                                             type: 'SET_CURSOR_POSITION',
@@ -1522,6 +1806,11 @@ function WritingSessionContent({ isEmbedded = false }) {
                                     onSelect={(e) => {
                                         const stats = getSelectionStats(e.target.value, e.target.selectionStart, e.target.selectionEnd);
                                         dispatch({ type: 'SET_SELECTION_COUNT', payload: stats.selectionCount });
+                                        setSelectionInfo({
+                                            start: stats.selectionStart,
+                                            end: stats.selectionEnd,
+                                            text: stats.selectionText || '',
+                                        });
                                         const lines = stats.cursorText.split('\n');
                                         dispatch({
                                             type: 'SET_CURSOR_POSITION',
@@ -1532,7 +1821,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                                         });
                                     }}
                                     placeholder="开始写作..."
-                                    disabled={!chapterInfo.chapter || isGenerating || Boolean(diffReview)}
+                                    disabled={!chapterInfo.chapter || lockedOnActiveChapter}
                                     spellCheck={false}
                                 />
                             )}
@@ -1550,13 +1839,56 @@ function WritingSessionContent({ isEmbedded = false }) {
                 mode={agentMode}
                 onModeChange={setAgentMode}
                 createDisabled={!canUseWriter}
+                inputDisabled={agentBusy && String(aiLockedChapter || '') !== activeChapterKey}
+                inputDisabledReason={
+                    agentBusy && String(aiLockedChapter || '') !== activeChapterKey
+                        ? `AI 正在撰写第 ${String(aiLockedChapter)} 章：右侧对话已锁定，请切换回该章节继续。`
+                        : ''
+                }
+                selectionCandidateSummary={
+                    agentMode === 'edit' && selectionInfo?.text?.trim()
+                        ? `已选中 ${countChars(selectionInfo.text)} 字（未添加）`
+                        : ''
+                }
+                selectionAttachedSummary={
+                    agentMode === 'edit' && attachedSelection?.text?.trim()
+                        ? `已添加选区 ${countChars(attachedSelection.text)} 字`
+                        : ''
+                }
+                selectionCandidateDifferent={
+                    Boolean(selectionInfo?.text?.trim()) &&
+                    Boolean(attachedSelection?.text?.trim()) &&
+                    (selectionInfo.start !== attachedSelection.start ||
+                        selectionInfo.end !== attachedSelection.end ||
+                        selectionInfo.text !== attachedSelection.text)
+                }
+                onAttachSelection={() => {
+                    if (!selectionInfo?.text?.trim()) return;
+                    setAttachedSelection({
+                        start: selectionInfo.start,
+                        end: selectionInfo.end,
+                        text: selectionInfo.text,
+                    });
+                    setEditScope('selection');
+                }}
+                onClearAttachedSelection={() => {
+                    setAttachedSelection(null);
+                    setEditScope('document');
+                }}
+                editScope={editScope}
+                onEditScopeChange={setEditScope}
                 contextDebug={contextDebug}
                 progressEvents={progressEvents}
                 messages={messages}
                 memoryPackStatus={memoryPackStatus}
-                activeChapter={chapterInfo.chapter}
+                activeChapter={agentBusy ? aiLockedChapter : chapterInfo.chapter}
                 editContextMode={editContextMode}
                 onEditContextModeChange={setEditContextMode}
+                diffReview={diffReview && String(diffReview?.chapterKey || '') === agentChapterKey ? diffReview : null}
+                diffDecisions={diffDecisions}
+                onAcceptAllDiff={handleAcceptAllDiff}
+                onRejectAllDiff={handleRejectAllDiff}
+                onApplySelectedDiff={handleApplySelectedDiff}
                 onSubmit={(text) => {
                     if (!chapterInfo.chapter) {
                         addMessage('system', '请先选择章节。');
@@ -1583,7 +1915,7 @@ function WritingSessionContent({ isEmbedded = false }) {
 
     
     const saveBusy = isSaving || analysisLoading || analysisSaving;
-    const showSaveAction = (chapterInfo.chapter || status === 'card_editing') && !isGenerating;
+    const showSaveAction = (chapterInfo.chapter || status === 'card_editing') && !lockedOnActiveChapter;
     const saveAction = showSaveAction ? (
         status === 'card_editing' ? (
             <Button
@@ -1610,7 +1942,8 @@ function WritingSessionContent({ isEmbedded = false }) {
         // Show Card Name in Title if card editing
         chapterTitle: status === 'card_editing'
             ? cardForm.name
-            : (chapterInfo.chapter ? (chapterInfo.chapter_title || `章节 ${chapterInfo.chapter}`) : null)
+            : (chapterInfo.chapter ? (chapterInfo.chapter_title || `章节 ${chapterInfo.chapter}`) : null),
+        aiHint: agentBusy && aiLockedChapter ? `正在撰写第 ${String(aiLockedChapter)} 章` : null,
     };
 
     return (
@@ -1618,6 +1951,15 @@ function WritingSessionContent({ isEmbedded = false }) {
             <div className="w-full h-full px-8 py-6">
                 {renderMainContent()}
             </div>
+
+            {notice ? (
+                <div
+                    key={notice.id}
+                    className="fixed bottom-4 right-4 z-[60] max-w-[420px] rounded-[6px] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-input-bg)] px-3 py-2 text-xs text-[var(--vscode-fg)] shadow-md"
+                >
+                    {notice.text}
+                </div>
+            ) : null}
 
 
             <ChapterCreateDialog

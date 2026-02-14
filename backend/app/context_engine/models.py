@@ -77,20 +77,28 @@ class ContextItem:
         if self.token_count == 0 and self.content:
             self.token_count = estimate_tokens(self.content)
     
-    def compressed(self, ratio: float = 0.5) -> "ContextItem":
+    def compressed(self, ratio: float = 0.5, query: Optional[str] = None) -> "ContextItem":
         """
         返回压缩版本
         Return a compressed version of this item
+
+        使用智能压缩，保留关键信息
         """
         if ratio >= 1.0:
             return self
-        
-        # Simple compression: truncate content
-        target_length = int(len(self.content) * ratio)
-        compressed_content = self.content[:target_length]
-        if len(self.content) > target_length:
-            compressed_content += "..."
-        
+
+        from app.context_engine.smart_compressor import smart_compress
+
+        compressed_content, stats = smart_compress(
+            self.content,
+            target_ratio=ratio,
+            query=query,
+            preserve_structure=True,
+        )
+
+        if not stats.get("compressed"):
+            return self
+
         return ContextItem(
             id=self.id,
             type=self.type,
@@ -98,7 +106,13 @@ class ContextItem:
             priority=self.priority,
             relevance_score=self.relevance_score,
             token_count=estimate_tokens(compressed_content),
-            metadata={**self.metadata, "compressed": True, "original_tokens": self.token_count},
+            metadata={
+                **self.metadata,
+                "compressed": True,
+                "compression": stats.get("method", "smart_compress"),
+                "original_tokens": self.token_count,
+                "compression_ratio": stats.get("ratio", ratio),
+            },
             created_at=self.created_at
         )
     
@@ -213,23 +227,17 @@ def estimate_tokens(text: str) -> int:
     """
     估算文本的 Token 数量
     Estimate token count for text
-    
-    粗略估算：中文 1 token ≈ 1.5 字符，英文 1 token ≈ 4 字符
-    取平均值 1 token ≈ 2 字符
+
+    使用 token_counter 模块的精确计数
     """
-    if not text:
-        return 0
-    return len(text) // 2
+    from app.context_engine.token_counter import count_tokens
+    return count_tokens(text)
 
 
 def count_tokens_accurate(text: str) -> int:
     """
-    更精确的 Token 计数（可选使用 tiktoken）
-    More accurate token counting (optionally using tiktoken)
+    更精确的 Token 计数
+    More accurate token counting
     """
-    try:
-        import tiktoken
-        encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(text))
-    except ImportError:
-        return estimate_tokens(text)
+    from app.context_engine.token_counter import count_tokens
+    return count_tokens(text)

@@ -1,16 +1,46 @@
-﻿import { useState } from 'react';
-import { motion } from 'framer-motion';
+﻿/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   同人导入页面 - 从 Wiki 站点检索并导入角色/设定卡
+ */
+
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Search, Link as LinkIcon, Loader, CheckCircle, Library, ChevronRight, Check, ArrowLeft } from 'lucide-react';
+import { Search, Link as LinkIcon, Loader, CheckCircle, Library, ChevronRight, ChevronLeft, Check, ArrowLeft } from 'lucide-react';
 import axios from 'axios';
+import logger from '../utils/logger';
 
 const API_BASE = '/api';
 
 /**
- * FanfictionView - 同人导入
- * 用于从 Wiki 站点检索并导入角色/设定卡，不改变接口与流程语义。
+ * 同人导入组件 / Fanfiction Import Component
+ *
+ * 多步骤导入流程（搜索 → 预览 → 确认）用于从 Wiki 站点导入角色和世界观卡片。
+ * 支持 Wiki 搜索和直接输入 URL 两种方式。
+ *
+ * @component
+ * @param {Object} props - 组件 props
+ * @param {boolean} [props.embedded=false] - 是否嵌入模式 / Embedded mode flag
+ * @param {Function} [props.onClose] - 嵌入模式下的关闭回调 / Close callback for embedded mode
+ * @returns {JSX.Element} 页面容器
+ *
+ * 功能特性：
+ * - 多源搜索：支持萌娘百科等 Wiki 站点
+ * - 页面预览：爬取并预览 Wiki 页面内容
+ * - 链接筛选：选择相关子页面进行批量导入
+ * - 卡片确认：显示提取的卡片并允许手动编辑
+ * - 导航历史：支持前进后退浏览已查看的页面
+ *
+ * @example
+ * <FanfictionView />
+ * // 或嵌入模式
+ * <FanfictionView embedded={true} onClose={handleClose} />
  */
-
 export default function FanfictionView({ embedded = false, onClose }) {
     const { projectId } = useParams();
     const navigate = useNavigate();
@@ -18,15 +48,17 @@ export default function FanfictionView({ embedded = false, onClose }) {
     const [step, setStep] = useState(1);
 
     const [searchQuery, setSearchQuery] = useState('');
-    const [searchEngine, setSearchEngine] = useState('moegirl');
     const [searchResults, setSearchResults] = useState([]);
     const [searching, setSearching] = useState(false);
+    const [manualUrl, setManualUrl] = useState('');
 
     const [selectedUrl, setSelectedUrl] = useState(null);
     const [pagePreview, setPagePreview] = useState(null);
     const [selectedLinks, setSelectedLinks] = useState([]);
     const [previewing, setPreviewing] = useState(false);
-    const [historyStack, setHistoryStack] = useState([]);
+    const [navUrls, setNavUrls] = useState([]);
+    const [navIndex, setNavIndex] = useState(-1);
+    const [subpageVisibleCount, setSubpageVisibleCount] = useState(200);
 
     const [proposals, setProposals] = useState([]);
     const [extracting, setExtracting] = useState(false);
@@ -39,23 +71,24 @@ export default function FanfictionView({ embedded = false, onClose }) {
         try {
             const response = await axios.post(`${API_BASE}/fanfiction/search`, {
                 query: searchQuery,
-                engine: searchEngine
+                engine: 'moegirl'
             });
             setSearchResults(response.data);
         } catch (error) {
-            console.error('Search failed:', error);
+            logger.error('Search failed:', error);
             alert('搜索失败，请重试');
         } finally {
             setSearching(false);
         }
     };
 
-    const handleSelectResult = async (url) => {
-        setSelectedUrl(url);
+    const handleSelectResult = async (url, { pushHistory = true } = {}) => {
+        const nextUrl = url;
+        setSelectedUrl(nextUrl);
         setPreviewing(true);
 
         try {
-            const response = await axios.post(`${API_BASE}/fanfiction/preview`, { url });
+            const response = await axios.post(`${API_BASE}/fanfiction/preview`, { url: nextUrl });
 
             if (!response.data.success) {
                 alert(`页面加载失败: ${response.data.error || '未知错误'}`);
@@ -64,39 +97,71 @@ export default function FanfictionView({ embedded = false, onClose }) {
             }
 
             setPagePreview(response.data);
+            setSubpageVisibleCount(200);
+            setManualUrl('');
+
+            if (pushHistory) {
+                setNavUrls((prev) => {
+                    const base = prev.slice(0, Math.max(0, navIndex + 1));
+                    const next = [...base, nextUrl];
+                    setNavIndex(next.length - 1);
+                    return next;
+                });
+            }
             if (response.data.content || response.data.links.length > 0) {
                 setStep(2);
             } else {
                 alert('该页面没有可提取的内容');
             }
         } catch (error) {
-            console.error('[Fanfiction] Preview failed:', error);
+            logger.error('[Fanfiction] Preview failed:', error);
             alert('加载页面失败，请检查网络连接');
         } finally {
             setPreviewing(false);
         }
     };
 
-    const handleNavigate = (url) => {
-        if (!url) return;
-        setHistoryStack(prev => [...prev, {
-            title: pagePreview?.title || '上一页',
-            url: selectedUrl
-        }]);
+    const handlePreviewManualUrl = async () => {
+        const url = String(manualUrl || '').trim();
+        if (!url) {
+            alert('请输入要分析的链接');
+            return;
+        }
         handleSelectResult(url);
     };
 
-    const handleBack = () => {
-        if (historyStack.length > 0) {
-            const prev = historyStack[historyStack.length - 1];
-            setHistoryStack(curr => curr.slice(0, -1));
-            handleSelectResult(prev.url);
-        } else {
-            setStep(1);
-            setPagePreview(null);
-            setSelectedLinks([]);
-            setHistoryStack([]);
-        }
+    const handleNavigate = (url) => {
+        if (!url) return;
+        handleSelectResult(url, { pushHistory: true });
+    };
+
+    const canGoBack = navIndex > 0;
+    const canGoForward = navIndex >= 0 && navIndex < navUrls.length - 1;
+
+    const goBack = () => {
+        if (!canGoBack) return;
+        const next = navIndex - 1;
+        setNavIndex(next);
+        setStep(2);
+        handleSelectResult(navUrls[next], { pushHistory: false });
+    };
+
+    const goForward = () => {
+        if (!canGoForward) return;
+        const next = navIndex + 1;
+        setNavIndex(next);
+        setStep(2);
+        handleSelectResult(navUrls[next], { pushHistory: false });
+    };
+
+    const resetToSearch = () => {
+        setStep(1);
+        setPagePreview(null);
+        setSelectedLinks([]);
+        setNavUrls([]);
+        setNavIndex(-1);
+        setSubpageVisibleCount(200);
+        setManualUrl('');
     };
 
     const toggleLink = (linkUrl) => {
@@ -111,26 +176,34 @@ export default function FanfictionView({ embedded = false, onClose }) {
         setExtracting(true);
         setProposals([]);
         try {
-            const response = await axios.post(`${API_BASE}/fanfiction/extract/batch`, {
-                project_id: projectId,
-                urls: selectedLinks
-            });
-
-            if (response.data.success) {
-                const nextProposals = (response.data.proposals || []).map((item) => ({
-                    name: item.name || '',
-                    type: item.type || 'Character',
-                    description: item.description || '',
-                    source_url: item.source_url || ''
-                }));
-                setProposals(nextProposals);
-                setStep(3);
-            } else {
-                alert(`提取失败: ${response.data.error}`);
+            const MAX_BATCH = 80;
+            const all = selectedLinks.slice();
+            const merged = [];
+            for (let i = 0; i < all.length; i += MAX_BATCH) {
+                const chunk = all.slice(i, i + MAX_BATCH);
+                const response = await axios.post(`${API_BASE}/fanfiction/extract/batch`, {
+                    project_id: projectId,
+                    urls: chunk
+                });
+                if (!response.data.success) {
+                    alert(`提取失败: ${response.data.error || '未知错误'}`);
+                    setExtracting(false);
+                    return;
+                }
+                merged.push(...(response.data.proposals || []));
             }
 
+            const nextProposals = merged.map((item) => ({
+                name: item.name || '',
+                type: item.type || 'Character',
+                description: item.description || '',
+                source_url: item.source_url || ''
+            }));
+            setProposals(nextProposals);
+            setStep(3);
+
         } catch (error) {
-            console.error('Extraction failed:', error);
+            logger.error('Extraction failed:', error);
             alert('提取失败，请查看控制台');
         } finally {
             setExtracting(false);
@@ -157,8 +230,9 @@ export default function FanfictionView({ embedded = false, onClose }) {
                 setStep(3);
             }
         } catch (error) {
-            console.error('Extraction failed:', error);
-            alert('提取失败');
+            logger.error('Extraction failed:', error);
+            const msg = error.response?.data?.error || error.response?.data?.detail || error.message;
+            alert(`提取失败: ${msg || '未知错误'}`);
         } finally {
             setExtracting(false);
         }
@@ -184,7 +258,7 @@ export default function FanfictionView({ embedded = false, onClose }) {
 
             setAcceptedProposals(prev => new Set([...prev, index]));
         } catch (error) {
-            console.error('[Fanfiction] Failed to create card:', error);
+            logger.error('[Fanfiction] Failed to create card:', error);
             alert(`导入失败: ${error.response?.data?.detail || error.message}`);
         }
     };
@@ -281,6 +355,24 @@ export default function FanfictionView({ embedded = false, onClose }) {
                             </button>
                         </div>
 
+                        <div className="flex gap-2 mb-6">
+                            <input
+                                type="text"
+                                value={manualUrl}
+                                onChange={(e) => setManualUrl(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handlePreviewManualUrl()}
+                                placeholder="或直接粘贴网址进行分析..."
+                                className="flex-1 px-4 py-3 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--vscode-focus-border)]"
+                            />
+                            <button
+                                onClick={handlePreviewManualUrl}
+                                disabled={previewing}
+                                className="px-6 py-3 border border-[var(--vscode-input-border)] rounded-[6px] hover:bg-[var(--vscode-list-hover)] disabled:opacity-50"
+                            >
+                                分析链接
+                            </button>
+                        </div>
+
                         {previewing && (
                             <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50">
                                 <div className="bg-[var(--vscode-bg)] p-6 rounded-[6px] border border-[var(--vscode-sidebar-border)] flex items-center gap-3">
@@ -316,22 +408,41 @@ export default function FanfictionView({ embedded = false, onClose }) {
 
                 {step === 2 && pagePreview && (
                     <div className="max-w-4xl mx-auto">
-                        <div className="mb-6 flex items-center justify-between">
-                            <div className="flex items-center gap-4">
+                        <div className="mb-6 flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
                                 <button
-                                    onClick={handleBack}
-                                    className="text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] flex items-center gap-1"
+                                    onClick={goBack}
+                                    disabled={!canGoBack || previewing}
+                                    className="w-9 h-9 rounded-[6px] border border-[var(--vscode-input-border)] flex items-center justify-center hover:bg-[var(--vscode-list-hover)] disabled:opacity-50"
+                                    title="后退"
                                 >
-                                    {historyStack.length > 0 ? '返回上一层' : '返回搜索'}
+                                    <ChevronLeft size={16} />
                                 </button>
-                                <h2 className="text-xl font-bold text-[var(--vscode-fg)]">{pagePreview.title}</h2>
+                                <button
+                                    onClick={goForward}
+                                    disabled={!canGoForward || previewing}
+                                    className="w-9 h-9 rounded-[6px] border border-[var(--vscode-input-border)] flex items-center justify-center hover:bg-[var(--vscode-list-hover)] disabled:opacity-50"
+                                    title="前进"
+                                >
+                                    <ChevronRight size={16} />
+                                </button>
+                                <button
+                                    onClick={resetToSearch}
+                                    disabled={previewing}
+                                    className="px-3 h-9 rounded-[6px] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] text-sm disabled:opacity-50"
+                                >
+                                    返回搜索
+                                </button>
                             </div>
+                            <h2 className="text-xl font-bold text-[var(--vscode-fg)] truncate">{pagePreview.title}</h2>
                         </div>
 
                         {pagePreview.content && (
                             <div className="mb-6 p-4 bg-[var(--vscode-bg)] rounded-[6px] border border-[var(--vscode-sidebar-border)]">
                                 <h3 className="font-bold text-[var(--vscode-fg)] mb-2">页面内容预览</h3>
-                                <p className="text-sm text-[var(--vscode-fg-subtle)] line-clamp-4">{pagePreview.content.substring(0, 500)}...</p>
+                                <div className="text-sm text-[var(--vscode-fg-subtle)] whitespace-pre-wrap max-h-56 overflow-y-auto border border-[var(--vscode-input-border)] rounded-[6px] p-3 bg-[var(--vscode-input-bg)]">
+                                    {pagePreview.content}
+                                </div>
                                 <button
                                     onClick={() => extractCardsFromUrl(selectedUrl)}
                                     disabled={extracting}
@@ -344,19 +455,30 @@ export default function FanfictionView({ embedded = false, onClose }) {
 
                         {pagePreview.links.length > 0 && (
                             <div className="mb-6">
-                                <div className="flex items-center justify-between mb-4">
-                                    <h3 className="font-bold text-[var(--vscode-fg)]">选择子页面进行提取（{pagePreview.links.length} 个链接）</h3>
-                                    <button
-                                        onClick={handleExtractFromLinks}
-                                        disabled={selectedLinks.length === 0 || extracting}
-                                        className="px-4 py-2 bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] rounded-[6px] hover:opacity-90 disabled:opacity-50"
-                                    >
-                                        {extracting ? '提取中...' : `提取选中（${selectedLinks.length}）`}
-                                    </button>
+                                <div className="flex items-center justify-between mb-3">
+                                    <div>
+                                        <h3 className="font-bold text-[var(--vscode-fg)]">
+                                            子词条（{pagePreview.links.length}）
+                                        </h3>
+                                        <p className="text-xs text-[var(--vscode-fg-subtle)]">
+                                            {pagePreview.is_list_page ? '列表页建议批量导入' : '普通词条也可选择少量相关子词条批量建卡（可选）'}
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={handleExtractFromLinks}
+                                            disabled={selectedLinks.length === 0 || extracting}
+                                            className="px-4 py-2 bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] rounded-[6px] hover:opacity-90 disabled:opacity-50"
+                                        >
+                                            {extracting ? '提取中...' : `提取选中（${selectedLinks.length}）`}
+                                        </button>
+                                    </div>
                                 </div>
 
-                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-96 overflow-y-auto">
-                                    {pagePreview.links.map((link, idx) => (
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-[520px] overflow-y-auto">
+                                    {pagePreview.links
+                                        .slice(0, subpageVisibleCount)
+                                        .map((link, idx) => (
                                         <div
                                             key={idx}
                                             className={`flex border rounded-[6px] overflow-hidden transition-colors ${selectedLinks.includes(link.url)
@@ -385,6 +507,26 @@ export default function FanfictionView({ embedded = false, onClose }) {
                                         </div>
                                     ))}
                                 </div>
+
+                                <div className="mt-2 flex items-center justify-between text-xs text-[var(--vscode-fg-subtle)]">
+                                    <span>已显示 {Math.min(subpageVisibleCount, pagePreview.links.length)} / {pagePreview.links.length}</span>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => setSubpageVisibleCount((v) => Math.min(pagePreview.links.length, v + 200))}
+                                            disabled={subpageVisibleCount >= pagePreview.links.length}
+                                            className="px-2 py-1 rounded-[6px] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] disabled:opacity-50"
+                                        >
+                                            显示更多
+                                        </button>
+                                        <button
+                                            onClick={() => setSubpageVisibleCount(pagePreview.links.length)}
+                                            disabled={subpageVisibleCount >= pagePreview.links.length}
+                                            className="px-2 py-1 rounded-[6px] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] disabled:opacity-50"
+                                        >
+                                            显示全部
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         )}
 
@@ -403,13 +545,45 @@ export default function FanfictionView({ embedded = false, onClose }) {
                 )}
 
                 {step === 3 && (
-                    <div>
-                        <div className="mb-4">
-                            <h2 className="text-lg font-bold text-[var(--vscode-fg)]">确认卡片</h2>
-                            <p className="text-sm text-[var(--vscode-fg-subtle)]">已提取 {proposals.length} 张卡片，请确认导入</p>
+                    <div className="max-w-5xl mx-auto">
+                        <div className="mb-4 flex items-start justify-between gap-4">
+                            <div>
+                                <h2 className="text-lg font-bold text-[var(--vscode-fg)]">确认卡片</h2>
+                                <p className="text-sm text-[var(--vscode-fg-subtle)]">已提取 {proposals.length} 张卡片，请确认导入</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={goBack}
+                                    disabled={!canGoBack || previewing}
+                                    className="w-9 h-9 rounded-[6px] border border-[var(--vscode-input-border)] flex items-center justify-center hover:bg-[var(--vscode-list-hover)] disabled:opacity-50"
+                                    title="后退"
+                                >
+                                    <ChevronLeft size={16} />
+                                </button>
+                                <button
+                                    onClick={goForward}
+                                    disabled={!canGoForward || previewing}
+                                    className="w-9 h-9 rounded-[6px] border border-[var(--vscode-input-border)] flex items-center justify-center hover:bg-[var(--vscode-list-hover)] disabled:opacity-50"
+                                    title="前进"
+                                >
+                                    <ChevronRight size={16} />
+                                </button>
+                                <button
+                                    onClick={() => setStep(2)}
+                                    className="px-3 h-9 rounded-[6px] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] text-sm"
+                                >
+                                    返回浏览
+                                </button>
+                                <button
+                                    onClick={resetToSearch}
+                                    className="px-3 h-9 rounded-[6px] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] text-sm"
+                                >
+                                    返回搜索
+                                </button>
+                            </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 gap-4">
                             {proposals.map((proposal, idx) => {
                                 const isAccepted = acceptedProposals.has(idx);
                                 return (
@@ -438,8 +612,8 @@ export default function FanfictionView({ embedded = false, onClose }) {
                                         <textarea
                                             value={proposal.description}
                                             onChange={(e) => handleProposalChange(idx, 'description', e.target.value)}
-                                            rows={4}
-                                            className="text-sm text-[var(--vscode-fg)] mb-3 w-full bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] rounded-[6px] p-2 resize-none focus:border-[var(--vscode-focus-border)] outline-none"
+                                            rows={10}
+                                            className="text-sm text-[var(--vscode-fg)] mb-3 w-full bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] rounded-[6px] p-3 resize-y min-h-[240px] focus:border-[var(--vscode-focus-border)] outline-none"
                                         />
 
                                         {!isAccepted && (

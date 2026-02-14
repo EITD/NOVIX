@@ -14,7 +14,7 @@ class MockProvider(BaseLLMProvider):
     ) -> Dict[str, Any]:
         prompt = "\n".join([f"{m.get('role')}: {m.get('content')}" for m in messages])
         content = (
-            "[MOCK] NOVIX is running in demo mode.\n\n"
+            "[MOCK] WenShape is running in demo mode.\n\n"
             "No API key is configured, so this is a placeholder response.\n\n"
             "---\n"
             "Input:\n"

@@ -1,16 +1,41 @@
 /**
- * ExplorerPanel - 资源管理器面板
- * 仅负责资源树与相关对话框容器，不改变业务逻辑。
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   资源管理器面板 - 项目结构浏览、章节管理、批量同步与结果校对
+ *   Explorer panel for project structure, chapter management, batch sync, and analysis review.
+ */
+
+/**
+ * 资源管理器面板 - 项目结构浏览与批量操作入口
+ *
+ * Main IDE explorer panel for browsing project structure, managing chapters and volumes,
+ * syncing chapter analysis, and reviewing extracted facts and summaries before persisting.
+ *
+ * @component
+ * @example
+ * return (
+ *   <ExplorerPanel className="custom-class" />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {string} [props.className] - 自定义样式类名 / Additional CSS classes
+ * @returns {JSX.Element} 资源管理器面板 / Explorer panel element
  */
 import { useState } from 'react';
 import { useIDE } from '../../../context/IDEContext';
-import { bindingsAPI, draftsAPI, evidenceAPI, sessionAPI, textChunksAPI } from '../../../api';
+import { bindingsAPI, evidenceAPI, sessionAPI, textChunksAPI } from '../../../api';
 import AnalysisSyncDialog from '../AnalysisSyncDialog';
 import AnalysisReviewDialog from '../../writing/AnalysisReviewDialog';
 import VolumeManageDialog from '../VolumeManageDialog';
 import VolumeTree from '../VolumeTree';
 import { Layers, RefreshCw, Plus, ArrowUpDown } from 'lucide-react';
 import { cn } from '../../ui/core';
+import logger from '../../../utils/logger';
 
 export default function ExplorerPanel({ className }) {
   const { state, dispatch } = useIDE();
@@ -18,6 +43,7 @@ export default function ExplorerPanel({ className }) {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewItems, setReviewItems] = useState([]);
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewError, setReviewError] = useState('');
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncResults, setSyncResults] = useState([]);
   const [syncError, setSyncError] = useState('');
@@ -41,6 +67,9 @@ export default function ExplorerPanel({ className }) {
         throw new Error(payload?.error || payload?.detail || '同步失败');
       }
       const results = Array.isArray(payload?.results) ? payload.results : [];
+      const analyses = results
+        .filter((item) => item?.success && item?.analysis && item?.chapter)
+        .map((item) => ({ chapter: item.chapter, analysis: item.analysis }));
       const bindingResults = await Promise.all(
         results.map(async (item) => {
           const chapter = item?.chapter;
@@ -57,8 +86,14 @@ export default function ExplorerPanel({ className }) {
         })
       );
       setSyncResults(bindingResults.filter(Boolean));
+      setReviewItems(analyses);
+      if (analyses.length > 0) {
+        setSyncOpen(false);
+        setReviewError('');
+        setReviewOpen(true);
+      }
     } catch (err) {
-      console.error(err);
+      logger.error(err);
       const detail = err?.response?.data?.detail || err?.response?.data?.error;
       setSyncError(detail || err?.message || '同步失败');
     } finally {
@@ -81,7 +116,7 @@ export default function ExplorerPanel({ className }) {
       const results = Array.isArray(res.data?.results) ? res.data.results : [];
       setSyncResults(results);
     } catch (err) {
-      console.error(err);
+      logger.error(err);
       setSyncError(err?.message || '重建失败');
     } finally {
       setSyncLoading(false);
@@ -98,7 +133,7 @@ export default function ExplorerPanel({ className }) {
       await textChunksAPI.rebuild(state.activeProjectId);
       setIndexRebuildSuccess(true);
     } catch (err) {
-      console.error(err);
+      logger.error(err);
       const detail = err?.response?.data?.detail || err?.response?.data?.error;
       setIndexRebuildError(detail || err?.message || '重建失败');
     } finally {
@@ -108,11 +143,26 @@ export default function ExplorerPanel({ className }) {
 
   const handleReviewSave = async (updatedAnalyses) => {
     setReviewSaving(true);
+    setReviewError('');
     try {
-      await draftsAPI.saveAnalyses(state.activeProjectId, updatedAnalyses);
+      const resp = await sessionAPI.saveAnalysisBatch(state.activeProjectId, {
+        items: updatedAnalyses,
+        overwrite: true,
+      });
+      if (resp?.data?.success === false) {
+        throw new Error(resp?.data?.error || resp?.data?.detail || '保存失败');
+      }
       setReviewOpen(false);
+      setReviewItems([]);
     } catch (err) {
-      console.error(err);
+      logger.error(err);
+      const detail = err?.response?.data?.detail || err?.response?.data?.error;
+      const code = err?.code || err?.name;
+      if (code === 'ECONNABORTED') {
+        setReviewError('保存超时：可能已保存成功，可稍后刷新确认。');
+      } else {
+        setReviewError(detail || err?.message || '保存失败');
+      }
     } finally {
       setReviewSaving(false);
     }
@@ -205,7 +255,12 @@ export default function ExplorerPanel({ className }) {
       <AnalysisReviewDialog
         open={reviewOpen}
         analyses={reviewItems}
-        onCancel={() => setReviewOpen(false)}
+        error={reviewError}
+        onCancel={() => {
+          setReviewOpen(false);
+          setReviewItems([]);
+          setReviewError('');
+        }}
         onSave={handleReviewSave}
         saving={reviewSaving}
       />

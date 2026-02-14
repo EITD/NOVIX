@@ -1,284 +1,268 @@
 <div align="center">
-  <img src="docs/img/logo.svg" alt="NOVIX Logo" width="800" />
-  <br>
-  
-  <p align="center">
-    <strong>深度上下文感知的多智能体小说创作系统</strong>
-    <br>
-    <em>Context-Aware Multi-Agent Novel Writing System</em>
-  </p>
-  
-  <br>
+  <img src="docs/img/logo.svg" alt="文枢 WenShape" width="520" />
 
   <p>
-    <a href="https://github.com/unitagain/NOVIX/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-PolyForm_Noncommercial_1.0.0-525252?style=flat-square&logo=shield" alt="License"></a>
-    <a href="https://github.com/unitagain/NOVIX"><img src="https://img.shields.io/badge/status-active-10B981?style=flat-square&logo=serverless" alt="Status"></a>
-    <a href="#"><img src="https://img.shields.io/badge/frontend-React_%7C_Vite-61DAFB?style=flat-square&logo=react" alt="Frontend"></a>
-    <a href="#"><img src="https://img.shields.io/badge/backend-FastAPI-009688?style=flat-square&logo=fastapi" alt="Backend"></a>
-    <a href="#"><img src="https://img.shields.io/badge/style-Calm_%26_Focus-F5F5F4?style=flat-square&logo=feather" alt="Style"></a>
+    <strong>深度上下文感知的智能体小说创作系统</strong><br />
+    <em>Deep Context-Aware Agent-Based Novel Writing System</em>
   </p>
-  <br>
+
+  <p>
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/license-PolyForm_NC_1.0.0-525252?style=flat-square" alt="License" /></a>
+    <img src="https://img.shields.io/badge/python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
+    <img src="https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React" />
+    <img src="https://img.shields.io/badge/fastapi-0.109+-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
+  </p>
+
+  <p>
+    <a href="#快速上手">快速上手</a> &middot;
+    <a href="#系统架构">架构</a> &middot;
+    <a href="#技术栈">技术栈</a> &middot;
+    <a href="#贡献">贡献</a> &middot;
+    <a href="#许可协议">许可协议</a>
+  </p>
 </div>
 
 ---
 
-> ⚖️ **许可协议变更声明 / License Notice**
->
-> ⚠️ **Effective Date: January 20, 2026**
->
-> 自 **2026年1月20日** 起，NOVIX 项目正式采用 **PolyForm Noncommercial License 1.0.0** 协议。
-> The NOVIX project formally adopts the **PolyForm Noncommercial License 1.0.0** starting from **Jan 20, 2026**.
->
-> 🛑 **严禁商业使用 (Strictly NO Commercial Use)**
-> *   未经作者书面授权，禁止任何形式的商业用途（包括销售、SaaS服务、企业内部盈利性使用等）。
-> *   Commercial use of any kind without written permission is strictly prohibited.
->
-> *在此日期之前发布的旧版本代码仍受原 MIT 协议约束。*
+## 文枢是什么
 
-**NOVIX** 不仅仅是一个写作工具，更是一个精密的**AI 编辑部**。
+文枢 WenShape 是一个面向长篇小说创作的 **上下文工程（Context Engineering）** 系统。它的核心问题是：当叙事跨越数万字时，LLM 会不可避免地遗忘早期设定、产生前后矛盾。文枢通过**编排式写作流程**、**动态事实追踪**和**精确的 Token 预算管理**来应对这一挑战。
 
-长篇小说的创作是一项系统工程，核心挑战在于**"遗忘"**与**"失控"**。NOVIX 拒绝将写作简化为线性的"提示生成"，而是通过**结构化工程 (Context Engineering)** 与 **精细分工 (Multi-Agent)**，让 AI 真正理解并掌控庞大的叙事网络。
-
-我们采用了全新的 **"Calm & Focus"** 设计语言——以纸张的质感、优雅的衬线字体和无干扰的极简主义，为您创造一隅静谧的创作空间，让思维随光标流淌。
+所有项目数据以 YAML / Markdown / JSONL 纯文本存储，天然支持 Git 版本控制。
 
 ---
 
-## ✨ 核心特性 (Features)
+## 核心设计
 
-### 🤖 工业级多智能体协作 (Agentic Workflow)
+### 编排式写作流程
 
-模拟真实的编辑部工作流，各司其职，紧密协作：
+系统由一个 Orchestrator（编排器）驱动完整的写作会话。编排器按阶段调度不同的专用模块，每个模块使用独立的系统提示词，可配置不同的 LLM 提供商和生成温度。
+
+一个完整的写作会话实际执行以下流程：
 
 ```mermaid
-graph LR
-    %% 样式定义
-    classDef user fill:#2563EB,stroke:#1D4ED8,stroke-width:2px,color:#fff
-    classDef creative fill:#F0F9FF,stroke:#0EA5E9,stroke-width:2px,color:#0369A1
-    classDef quality fill:#FFF1F2,stroke:#F43F5E,stroke-width:2px,color:#BE123C
-    classDef memory fill:#FEFCE8,stroke:#EAB308,stroke-width:2px,color:#854D0E
-    classDef artifact fill:#F3F4F6,stroke:#6B7280,stroke-width:1px,stroke-dasharray: 5 5
-
-    User((User)):::user -->|设定目标| Director
-    
-    subgraph "✨ 创意核心 Creative Core"
-        Director[🎬 导演 Director]:::creative -->|编排大纲| Writer[✍️ 撰稿人 Writer]:::creative
-    end
-
-    subgraph "🧠 记忆系统 Memory System"
-        Archivist[🗃️ 档案员 Archivist]:::memory
-        Canon[(动态事实表)]:::memory
-    end
-
-    subgraph "💎 质量保证 Quality Assurance"
-        Writer -->|初稿| Reviewer[🧐 审阅员 Reviewer]:::quality
-        Reviewer -->|修订意见| Editor[📝 编辑 Editor]:::quality
-    end
-
-    Editor -->|润色完成| Draft([📄 最终草稿]):::artifact
-    
-    %% 交互流
-    Archivist -.->|设定检索| Writer
-    Draft -.->|新设定提取| Archivist
-    Archivist -->|更新| Canon
-    
-    %% 连接样式
-    linkStyle default stroke:#64748B,stroke-width:1.5px
+flowchart LR
+  A[用户发起写作请求] --> B[阶段 1：场景准备（Archivist）]
+  B --> C[阶段 2：上下文构建（Context Engine）]
+  C --> D[阶段 3：草稿生成（Writer）]
+  D --> E[阶段 4：修订循环（Editor / Writer）]
+  E --> F[阶段 5：收尾分析（Archivist）]
 ```
 
-### 📚 同人创作支持 (Fanfiction Support)
+| 阶段 | 目标 | 关键产物 |
+| :--- | :--- | :--- |
+| 1 场景准备 | 为“这一章要写什么”建立可检索的结构化入口 | Scene Brief（角色/设定卡、事实、摘要、时间线） |
+| 2 上下文构建 | 在有限 Token 预算内把“最相关的信息”组织进上下文 | 记忆包（Working Memory + Evidence 命中 + Gap/Questions） |
+| 3 草稿生成 | 以流式方式生成初稿，并显式标记待确认项 | 草稿正文（含 `[TO_CONFIRM]`） |
+| 4 修订循环 | 以最小改动完成修改，避免波及无关内容 | Patch 操作（replace/insert/delete）+ Diff 预览 |
+| 5 收尾分析 | 将本章沉淀为可检索资产，为后续章节复用 | 章节摘要 + Canon（事实/时间线/状态） |
 
-NOVIX 现已支持从 Wiki 导入世界观，为同人创作提供强大助力：
+> **说明**：Archivist / Writer / Editor 并非自主决策的独立智能体，而是由编排器按需调度的专用模块。它们各自维护独立的系统提示词和 LLM 配置，但执行顺序和调用时机由编排器决定。
 
-*   **🌐 多源 Wiki 接入**: 支持 **萌娘百科**、**Fandom**、**Wikipedia** 等主流 Wiki 站点。
-*   **⚡ 极速批量提取**: 独创的并发爬取与聚合算法，支持一次性提取数十个角色/设定，效率提升 **10 倍**。
-*   **🧬 深度结构化**: 自动解析 Infobox 与正文，提取角色**外貌**、**性格**、**人际关系**等关键信息，直接生成可用的设定卡片。
+### 上下文引擎
 
-### 🧠 深度上下文工程 (Deep Context)
+上下文引擎负责在每次 LLM 调用前，在有限的 Token 预算内选出最相关的信息。
 
-NOVIX 通过动态维护**世界状态**，解决长篇连载中的一致性问题：
+**预算分配策略**（默认 128K Token）：
 
-*   **🗃️ 智能档案员**: 自动检测剧情中产生的新角色、地点或设定，并提议将其归档。
-*   **📜 动态事实表**: 随着剧情推进，自动累积关键事实（如"主角受伤"、"获得宝物"），并在后续生成中自动召回。
-*   **🎯 精准召回**: 每次生成只提取当前场景最相关的 5% 信息，大幅减少 Token 消耗并消除幻觉。
+| 分配对象 | 比例 | 说明 |
+| :--- | :--- | :--- |
+| 系统规则 | 5% | 行为约束和提示词 |
+| 角色/世界观卡片 | 15% | 当前场景相关的设定卡片 |
+| 动态事实表 | 10% | 累积的关键剧情事实 |
+| 历史摘要 | 20% | 已完成章节的压缩摘要 |
+| 当前草稿 | 30% | 正在创作的章节内容 |
+| 输出预留 | 20% | 保留给模型生成 |
 
-### 🎨 沉浸式创作体验 (Calm UI)
+**选择引擎**采用两层策略：
+1. **确定性选择**：风格卡、场景简要等必选项，确保写作风格一致
+2. **检索式选择**：对候选卡片（每类最多 50 个）进行 BM25 + 词重叠混合评分，返回 Top-K 最相关项
 
-*   **设定提案**: AI 在生成过程中会自动发现新设定的诞生，您可以一键采纳或拒绝，保持设定集的时效性。
-*   **专注模式**: 全屏无干扰的写作界面，混排 `Noto Serif SC` 与 `Inter`，还原经典书写体验。
-*   **Git-Native**: 所有数据以 YAML/Markdown 存储，天然支持版本控制与回滚。
+### 动态事实表（Canon）
 
----
+系统在每次章节确认后执行收尾分析：通过 LLM 调用提取新产生的事实条目（角色状态变化、地点转移、物品获取等），写入 JSONL 格式的事实表。同时使用启发式规则（基于动作动词、特定后缀、出现频率阈值）检测可能的新角色和世界观设定，以提议形式呈现给用户确认。
 
-## 🚀 快速上手 (Quick Start)
+后续章节生成时，事实表参与上下文选择引擎的评分排序，确保长篇叙事的一致性。
 
-### 📦 方式一：下载 Release 版本（推荐普通用户）
+### 同人创作支持
 
-**零配置，开箱即用！** 无需安装 Python 或 Node.js。
-
-1. 📥 前往 **[Releases 页面](https://github.com/unitagain/NOVIX/releases)** 下载最新版本
-   - Windows 用户：下载 `NOVIXv0.x.x.zip`
-   
-2. 📂 解压到任意目录
-
-3. ▶️ 双击运行 **`NOVIX.exe`**
-   - 系统会自动启动后台服务
-   - 默认浏览器会自动打开操作界面 (http://localhost:8000)
-   
-4. ⚙️ 初次使用需配置 API Key
-   - 点击右上角 **"设置 → 智能体配置"**
-   - 填入您的 **OpenAI** / **Anthropic** / **DeepSeek** API Key
-   - 或选择 **Mock 模式**进行功能体验（无需真实 Key）
-
-5. ✨ 开始创作！
-   - 创建新项目 → 配置角色/世界观卡片 → 开启写作会话
+内置 Wiki 爬取和结构化提取能力，支持从萌娘百科、Fandom、Wikipedia 等站点批量导入角色和世界观信息，自动解析 Infobox 和正文内容，生成可编辑的设定卡片。
 
 ---
 
-### 💻 方式二：从源码运行（开发者 / 贡献者）
+## 系统架构
 
-适用于希望修改代码、调试功能或为项目贡献的开发者。
+```
+frontend/ (React 18 + Vite + TypeScript)
+├── pages/              页面组件（项目列表、写作会话、系统设置）
+├── components/ide/     IDE 式三段布局（ActivityBar + SidePanel + Editor）
+├── context/            全局状态管理（IDEContext, Reducer 模式）
+├── hooks/              自定义 Hooks（WebSocket 事件追踪、防抖请求）
+└── api.ts              统一 API 层（Axios, 12 个模块, WebSocket 重连）
 
-#### 📋 环境要求
-- **Python**: 3.10 或更高版本
-- **Node.js**: 18 或更高版本
-- **Git**: 用于克隆仓库和版本管理
+backend/ (FastAPI + Pydantic v2)
+├── agents/             专用模块（Archivist / Writer / Editor / Extractor）
+│   ├── base.py         基类：统一 LLM 调用、Token 追踪、消息构建
+│   ├── writer.py       撰稿人：研究循环 + 流式生成
+│   ├── editor.py       编辑：Patch 生成 + 选区编辑 + 回退策略
+│   ├── archivist.py    档案员：场景简要 + 事实检测 + 设定评分
+│   └── extractor.py    提取器：Wiki → 结构化卡片
+├── orchestrator/       编排器
+│   ├── orchestrator.py 写作会话全流程协调
+│   ├── _context_mixin  上下文和记忆包准备
+│   └── _analysis_mixin 章节分析和事实表更新
+├── context_engine/     上下文引擎
+│   ├── select_engine   两层选择策略（确定性 + 检索式）
+│   ├── budget_manager  Token 预算分配与追踪
+│   └── smart_compressor 历史对话智能压缩
+├── llm_gateway/        LLM 网关
+│   ├── gateway.py      统一接口：重试、流式、成本追踪
+│   └── providers/      9 个提供商适配（OpenAI / Anthropic / DeepSeek / Qwen / Kimi / GLM / Gemini / Grok / Custom）
+├── routers/            REST API（15 个路由模块）
+├── services/           业务逻辑层
+├── storage/            文件系统存储（YAML / Markdown / JSONL）
+└── data/               项目数据目录（Git-Native）
+```
 
-#### 🔧 安装步骤
+### 数据存储结构
+
+```
+data/{project_id}/
+├── project.yaml          项目元数据
+├── cards/                设定卡片（角色、世界观、文风）
+│   ├── character_001.yaml
+│   └── worldview_001.yaml
+├── canon/                动态事实表
+│   └── facts.jsonl
+├── drafts/               章节草稿
+│   ├── .chapter_order
+│   ├── chapter_001.md
+│   └── chapter_002.md
+└── sessions/             会话历史
+    └── session_001.jsonl
+```
+
+---
+
+## 技术栈
+
+| 层 | 技术 |
+| :--- | :--- |
+| **前端** | React 18, Vite 5, TypeScript, TailwindCSS v3, SWR, Framer Motion, Lucide React |
+| **后端** | FastAPI, Pydantic v2, Uvicorn, WebSocket, aiofiles |
+| **LLM** | OpenAI SDK, Anthropic SDK（支持 9 个提供商动态切换） |
+| **存储** | 文件系统（YAML / Markdown / JSONL），Git-Native 设计 |
+| **打包** | PyInstaller（单目录模式，含前端构建产物） |
+
+---
+
+## 快速上手
+
+### 方式一：下载 Release（推荐）
+
+无需安装 Python 或 Node.js，开箱即用。
+
+1. 前往 [Releases](https://github.com/unitagain/WenShape/releases) 下载最新版本 `WenShape_vX.X.X.zip`
+2. 解压到任意目录
+3. 双击运行 `WenShape.exe`，浏览器自动打开
+4. 在 **设置 → 智能体配置** 中填入 API Key（支持 OpenAI / Anthropic / DeepSeek 等，也可选 Mock 模式体验）
+5. 创建项目，开始写作
+
+### 方式二：从源码运行
+
+**环境要求**：Python 3.10+, Node.js 18+
 
 ```bash
-# 1. 克隆仓库
-git clone https://github.com/unitagain/NOVIX.git
-cd NOVIX-main
+# 克隆仓库
+git clone https://github.com/unitagain/WenShape.git
+cd WenShape-main
 
-# 2. 一键启动（自动安装依赖）
-# Windows 用户
+# Windows 一键启动
 start.bat
 
-# macOS/Linux 用户
+# macOS / Linux
 ./start.sh
 ```
 
-启动脚本会自动完成：
-- ✅ 安装 Python 依赖 (`pip install -r backend/requirements.txt`)
-- ✅ 安装 Node.js 依赖 (`npm install` in frontend/)
-- ✅ 启动后端服务 (FastAPI on http://localhost:8000)
-- ✅ 启动前端服务 (Vite Dev Server on http://localhost:3000)
+启动脚本自动完成依赖安装、端口检测（默认后端 8000，前端 3000，冲突时自动递增）和服务启动。
 
-#### 🌐 访问应用
-- **前端界面**: http://localhost:3000 （支持热重载 HMR）
-- **后端 API**: http://localhost:8000
-- **API 文档**: http://localhost:8000/docs （FastAPI Swagger UI）
+**手动启动**：
 
-#### ⚙️ 配置说明
-1. 复制后端配置模板：
-   ```bash
-   cp backend/.env.example backend/.env
-   ```
-2. 编辑 `backend/.env`，填入您的 API Keys：
-   ```env
-   OPENAI_API_KEY=sk-your-key-here
-   DEEPSEEK_API_KEY=your-deepseek-key
-   ANTHROPIC_API_KEY=your-anthropic-key
-   ```
-3. （可选）编辑 `backend/config.yaml` 自定义智能体行为参数
+```bash
+# 终端 1 — 后端
+cd backend
+pip install -r requirements.txt
+python -m app.main
 
----
+# 终端 2 — 前端
+cd frontend
+npm install
+npm run dev
+```
 
-### 🤝 贡献代码 (Contributing)
+访问地址以启动日志输出为准。后端提供 Swagger 文档：`http://localhost:8000/docs`
 
-我们非常欢迎社区贡献！如果您希望提交 Pull Request：
+### 配置
 
-#### 📝 贡献流程
-1. **Fork** 本仓库到您的 GitHub 账号
-2. **Clone** 您 Fork 的仓库到本地：
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/NOVIX.git
-   cd NOVIX
-   ```
-3. **创建功能分支**（基于 `main`）：
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-4. **进行开发与测试**
-   - 遵循现有代码风格
-   - 确保功能完整且可运行
-   - 添加必要的注释和文档
-5. **提交变更**：
-   ```bash
-   git add .
-   git commit -m "feat: add your feature description"
-   ```
-6. **推送到您的 Fork**：
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-7. **提交 Pull Request**：
-   - 前往原仓库的 [Pull Requests](https://github.com/unitagain/NOVIX/pulls) 页面
-   - 点击 "New Pull Request"
-   - 选择您的分支并填写清晰的 PR 描述
-   - 等待维护者 Review
+复制 `backend/.env.example` 为 `backend/.env`，填入 API Key：
 
-#### ✅ PR 规范
-- **标题格式**：`feat/fix/docs/refactor: 简要描述`
-- **描述内容**：
-  - 🎯 解决的问题或实现的功能
-  - 🛠️ 技术方案简述
-  - 📸 （如涉及 UI）附上截图或演示
-- **代码质量**：
-  - 确保后端代码通过基本的语法检查
-  - 确保前端代码能正常构建 (`npm run build`)
+```env
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+DEEPSEEK_API_KEY=...
+```
 
-#### 💡 贡献方向建议
-- 🐛 修复 Bug
-- ✨ 新增功能（如新的智能体、UI 组件）
-- 📚 完善文档和示例
-- 🌍 国际化支持（英文翻译等）
-- 🎨 UI/UX 优化
+可在 `backend/config.yaml` 中为不同模块指定 LLM 提供商和参数：
+
+```yaml
+agents:
+  archivist:
+    provider: openai       # 档案员：精确性优先
+    temperature: 0.3
+  writer:
+    provider: anthropic    # 撰稿人：创意性优先
+    temperature: 0.7
+  editor:
+    provider: anthropic
+    temperature: 0.5
+```
 
 ---
 
-## 🛠️ 技术栈 (Tech Stack)
+## 贡献
 
-| 领域 | 技术方案 |
-| :--- | :--- |
-| **Frontend** | React, Vite, TailwindCSS (v3), Lucide React |
-| **Backend** | FastAPI, Pydantic, Python-dotenv |
-| **Storage** | File-based (YAML/Markdown/JSONL) |
-| **AI Core** | OpenAI API Standard (Supports DeepSeek/Claude/GPT-4o) |
+欢迎任何形式的贡献——Bug 报告、功能建议、代码提交、文档改进、国际化翻译、UI/UX 优化。
 
----
+### 贡献流程
 
-## ⚖️ 许可协议 (License)
+1. Fork 本仓库
+2. 创建功能分支：`git checkout -b feature/your-feature`
+3. 提交变更：`git commit -m "feat: description"`
+4. 推送并创建 Pull Request
 
-本项目采用 **PolyForm Noncommercial License 1.0.0**。
+### PR 规范
 
-> **"源代码可用" (Source Available) ≠ "开源" (Open Source)**
-
-### ✅ 允许 (Permitted)
-*   **个人非商业使用**：您可以自由下载、运行、修改代码用于个人学习、研究或娱乐。
-*   **非营利组织使用**：慈善机构、学校等因教育目的使用。
-
-### 🚫 绝对禁止 (Strictly Prohibited)
-*   **禁止任何商业行为**：哪怕只赚 1 分钱也是违法的。
-*   **禁止公司内部使用**：如果您的公司是营利性实体，即使只是内部工具通过此软件提效，也被视为商业用途。
-*   **禁止“洗稿”**：禁止修改代码后换皮发布商业产品。
-
-📄 完整法律文本请查看 [LICENSE](./LICENSE) 文件。任何违反本协议的行为都将面临法律追责。
+- 标题格式：`feat|fix|docs|refactor: 简要描述`
+- 确保代码可正常运行（后端无语法错误，前端 `npm run build` 通过）
+- 涉及 UI 变更请附截图
 
 ---
 
-### 💼 商业授权 (Commercial Licensing)
+## 许可协议
 
-如果您希望将 NOVIX 用于任何商业目的（包括但不限于 SaaS、企业部署、二次开发销售），您**必须**获得作者的书面授权。
+本项目采用 [PolyForm Noncommercial License 1.0.0](./LICENSE)。
 
-请联系：
-*   **Email**: `1467673018@qq.com`
-*   **GitHub**: [unitagain](https://github.com/unitagain)
+- **允许**：个人非商业使用、学习、研究、修改
+- **禁止**：任何形式的商业用途（包括企业内部使用）
+
+商业授权请联系：[1467673018@qq.com](mailto:1467673018@qq.com)
 
 ---
 
 <div align="center">
-  <br>
-  <p>Made with ❤️ by the NOVIX Team</p>
+  <br />
+  <p><strong>如果你正在使用文枢创作，欢迎把体验与反馈告诉我们。</strong></p>
+  <p>你的一条 Issue、一次 PR，甚至一句建议，都可能让它变得更好。</p>
+  <p>如果这个项目对你有帮助，点一个 Star 也是很大的鼓励。</p>
   <p><em>Let the story unfold.</em></p>
 </div>

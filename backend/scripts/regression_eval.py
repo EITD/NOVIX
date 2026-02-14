@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regression evaluation script for NOVIX writing agent.
+Regression evaluation script for WenShape writing agent.
 Runs fixed instruction cases and outputs context_debug + metrics.
 """
 
@@ -208,7 +208,7 @@ async def _run_case(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="NOVIX regression evaluation runner")
+    parser = argparse.ArgumentParser(description="WenShape regression evaluation runner")
     parser.add_argument("--project-id", required=True, help="Project ID")
     parser.add_argument("--chapter", required=True, help="Chapter ID")
     parser.add_argument("--chapter-title", default="", help="Chapter title (optional)")

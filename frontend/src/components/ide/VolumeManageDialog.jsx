@@ -3,6 +3,7 @@ import useSWR from 'swr';
 import { Layers, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { volumesAPI } from '../../api';
 import { cn } from '../ui/core';
+import logger from '../../utils/logger';
 
 /**
  * VolumeManageDialog - 分卷管理弹窗
@@ -51,7 +52,7 @@ export default function VolumeManageDialog({ open, projectId, onClose }) {
       await mutate();
       resetState();
     } catch (error) {
-      console.error(error);
+      logger.error(error);
       alert(`创建分卷失败: ${error.message}`);
     } finally {
       setSaving(false);
@@ -75,7 +76,7 @@ export default function VolumeManageDialog({ open, projectId, onClose }) {
       await mutate();
       resetState();
     } catch (error) {
-      console.error(error);
+      logger.error(error);
       alert(`更新分卷失败: ${error.message}`);
     } finally {
       setSaving(false);
@@ -96,7 +97,7 @@ export default function VolumeManageDialog({ open, projectId, onClose }) {
       await volumesAPI.delete(projectId, volumeId);
       await mutate();
     } catch (error) {
-      console.error(error);
+      logger.error(error);
       alert(`删除分卷失败: ${error.message}`);
     } finally {
       setSaving(false);

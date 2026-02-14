@@ -1,5 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Working memory compilation and gap-driven questions.
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  工作记忆服务 - 编译写作工作记忆，通过缺口检测生成针对性问题，支持证据检索和用户交互。
+  Working memory compilation and gap-driven questions - Builds working memory packs with evidence retrieval and generates user questions based on content gaps.
 """
 
 from __future__ import annotations
@@ -9,10 +18,22 @@ from typing import Any, Dict, List, Optional
 
 from app.services.evidence_service import evidence_service
 from app.services.chapter_binding_service import chapter_binding_service
+from app.schemas.draft import SceneBrief
+from app.config import config
 
 
 class WorkingMemoryService:
-    """Compile working memory and generate gap-driven questions."""
+    """
+    工作记忆编译服务 - 为写作过程编译上下文和生成缺口问题。
+
+    Compile working memory, evidence packs, and generates gap-driven questions to guide user research.
+    Supports semantic reranking, entity tracking, and memory persistence.
+
+    Attributes:
+        MIN_GAP_SUPPORT_SCORE: 缺口支持最小分数 / Minimum score for gap support
+        MIN_WORLD_RULE_SCORE: 世界规则最小分数 / Minimum score for world rules
+        MAX_ITEMS: 各类型证据的最大数量 / Max items per evidence type in memory
+    """
 
     MIN_GAP_SUPPORT_SCORE = 3.0
     MIN_WORLD_RULE_SCORE = 3.5
@@ -30,7 +51,7 @@ class WorkingMemoryService:
 
     def build_gap_items(
         self,
-        scene_brief: Any,
+        scene_brief: Optional[SceneBrief],
         chapter_goal: str,
         seed_characters: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
@@ -155,12 +176,14 @@ class WorkingMemoryService:
         self,
         project_id: str,
         chapter: str,
-        scene_brief: Any,
+        scene_brief: Optional[SceneBrief],
         chapter_goal: str,
         user_answers: Optional[List[Dict[str, Any]]] = None,
         extra_queries: Optional[List[str]] = None,
         force_minimum_questions: Optional[bool] = None,
-        semantic_rerank: bool = True,
+        semantic_rerank: Optional[bool] = None,
+        round_index: Optional[int] = None,
+        trace_note: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Prepare working memory, evidence pack, and questions.
 
@@ -169,11 +192,17 @@ class WorkingMemoryService:
             chapter: Chapter id.
             scene_brief: Scene brief object or dict.
             chapter_goal: Chapter goal text.
+            semantic_rerank: Enable semantic rerank when available.
+            round_index: Optional research round index for trace metadata.
+            trace_note: Optional note to include in retrieval stats.
 
         Returns:
             Dict containing working_memory, gaps, unresolved_gaps, evidence_pack, retrieval_requests, questions.
         """
         user_answers_list = user_answers or []
+        if semantic_rerank is None:
+            semantic_rerank = bool((config.get("retrieval") or {}).get("semantic_rerank", True))
+        rerank_top_k = int((config.get("retrieval") or {}).get("rerank_top_k", self.SEMANTIC_RERANK_TOP_K))
 
         seed_window = 2
         recent_chapters = await chapter_binding_service.get_recent_chapters(
@@ -252,6 +281,7 @@ class WorkingMemoryService:
         gap_supported: Dict[str, bool] = {}
         gap_support_scores: Dict[str, float] = {}
         skip_retrieval_kinds = {"character_change"}
+        trace_meta = {"round": round_index, "note": trace_note or ""}
         for gap in gaps:
             queries = [q for q in gap.get("queries", []) if q]
             if not queries:
@@ -289,23 +319,26 @@ class WorkingMemoryService:
                 text_chunk_chapters=text_chunk_chapters,
                 semantic_rerank=semantic_rerank_enabled,
                 rerank_query=rerank_query,
-                rerank_top_k=self.SEMANTIC_RERANK_TOP_K,
+                rerank_top_k=rerank_top_k,
+                trace_meta=trace_meta,
             )
             items = result.get("items", [])
+            stats = result.get("stats", {})
             evidence_groups.append(
                 {
                     "gap": gap,
                     "queries": queries,
                     "items": items,
-                    "stats": result.get("stats", {}),
+                    "stats": stats,
                 }
             )
             retrieval_requests.append(
                 {
                     "gap": gap,
                     "queries": queries,
-                    "types": result.get("stats", {}).get("types", {}),
+                    "types": stats.get("types", {}),
                     "count": len(items),
+                    "top_sources": stats.get("top_sources") or [],
                 }
             )
             combined_items.extend(items)
@@ -330,24 +363,27 @@ class WorkingMemoryService:
                     text_chunk_chapters=_merge_chapter_window(recent_chapters, binding_chapters),
                     semantic_rerank=bool(semantic_rerank),
                     rerank_query=goal_text,
-                    rerank_top_k=self.SEMANTIC_RERANK_TOP_K,
+                    rerank_top_k=rerank_top_k,
+                    trace_meta=trace_meta,
                 )
                 items = result.get("items", [])
+                stats = result.get("stats", {})
                 evidence_groups.append(
                     {
                         "gap": {"kind": "fallback", "text": "goal_fallback", "queries": [goal_text], "ask_user": False},
                         "queries": [goal_text],
                         "items": items,
-                        "stats": result.get("stats", {}),
+                        "stats": stats,
                     }
                 )
                 retrieval_requests.append(
                     {
                         "gap": {"kind": "fallback", "text": "goal_fallback", "queries": [goal_text], "ask_user": False},
                         "queries": [goal_text],
-                        "types": result.get("stats", {}).get("types", {}),
+                        "types": stats.get("types", {}),
                         "count": len(items),
                         "skipped": False,
+                        "top_sources": stats.get("top_sources") or [],
                     }
                 )
                 combined_items.extend(items)
@@ -555,7 +591,7 @@ class WorkingMemoryService:
 
     def _compile_working_memory(
         self,
-        scene_brief: Any,
+        scene_brief: Optional[SceneBrief],
         chapter_goal: str,
         evidence_items: List[Dict[str, Any]],
         unresolved_gaps: List[Dict[str, Any]],
@@ -632,7 +668,7 @@ class WorkingMemoryService:
         return "\n".join(lines)
 
 
-def _build_focus_terms(scene_brief: Any, goal_text: str) -> List[str]:
+def _build_focus_terms(scene_brief: Optional[SceneBrief], goal_text: str) -> List[str]:
     terms: List[str] = []
     terms.extend(_extract_terms(goal_text))
 

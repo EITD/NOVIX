@@ -1,4 +1,4 @@
-# NOVIX Configuration / NOVIX 配置文件
+# WenShape Configuration / WenShape 配置文件
 
 # LLM Providers / 大模型提供商配置
 # Copyright (c) 2026 丁逸飞 (Ding Yifei) <1467673018@qq.com>
@@ -53,12 +53,45 @@ context_budget:
   current_draft: 0.30
   output_reserve: 0.20
 
+# Archivist Configuration / 档案员配置
+archivist:
+  # 事实检索的章节窗口大小 / Chapter window size for fact retrieval
+  fact_chapter_window: 3
+  # 摘要章节窗口大小 / Chapter window size for summaries
+  summary_chapter_window: 3
+  # 最小章节窗口 / Minimum chapter window
+  min_chapter_window: 2
+  # 最大章节窗口 / Maximum chapter window
+  max_chapter_window: 10
+  # 场景简报中的最大角色数 / Max characters in scene brief
+  max_characters: 5
+  # 场景简报中的最大世界观约束数 / Max world constraints in scene brief
+  max_world_constraints: 5
+  # 每章提取的最大事实数 / Max facts extracted per chapter
+  max_facts: 5
+
+# Writer Configuration / 撰稿人配置
+writer:
+  # 默认目标字数 / Default target word count
+  default_target_word_count: 3000
+
+# Retrieval Configuration / 检索配置
+retrieval:
+  semantic_rerank: true
+  rerank_top_k: 16
+
 # Session Configuration / 会话配置
 session:
   max_iterations: 5
+  max_question_rounds: 2
+  max_research_rounds: 5
   auto_save_interval: 60  # seconds / 秒
 
 # Storage Configuration / 存储配置
 storage:
   data_dir: ../data
   encoding: utf-8
+  # 记忆包历史备份保留数 / Max memory pack history backups per chapter
+  max_memory_pack_history: 3
+  # 草稿备份保留数 / Max draft previous-version backups
+  max_draft_prev_backups: 3

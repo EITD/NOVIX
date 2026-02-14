@@ -1,9 +1,46 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   增强按钮组件 - 支持加载状态的按钮
+ */
+
 import { cn } from "../../lib/utils";
 import { Loader2 } from "lucide-react";
 
 /**
- * Button - 轻量按钮组件
+ * 增强按钮组件 / Enhanced Button Component with Loading State
+ *
+ * 轻量级按钮组件，支持多种样式变体、尺寸和加载状态。
  * 仅处理样式与加载态，不改变业务语义。
+ *
+ * @component
+ * @param {Object} props - 组件 props
+ * @param {string} [props.className] - 额外 CSS 类名 / Additional CSS classes
+ * @param {string} [props.variant='primary'] - 按钮样式 / Button style variant
+ *   - 'primary': 主操作按钮（填充色）
+ *   - 'secondary': 次级操作按钮
+ *   - 'outline': 边框模式
+ *   - 'ghost': 透明背景
+ *   - 'destructive': 危险操作（删除等）
+ * @param {string} [props.size='default'] - 按钮尺寸 / Button size
+ *   - 'sm': 小号 (h-8 px-3 text-xs)
+ *   - 'default': 标准 (h-10 px-4)
+ *   - 'lg': 大号 (h-12 px-8)
+ *   - 'icon': 图标按钮 (h-10 w-10)
+ * @param {boolean} [props.isLoading=false] - 是否显示加载状态 / Loading state indicator
+ * @param {React.ReactNode} props.children - 按钮内容 / Button content
+ * @param {*} props.* - 其他 HTML button 原生属性 / Standard HTML button attributes
+ * @returns {JSX.Element} 按钮元素
+ *
+ * @example
+ * <Button variant="primary" isLoading={isSubmitting}>
+ *   {isSubmitting ? '提交中...' : '提交'}
+ * </Button>
  */
 export function Button({ className, variant = "primary", size = "default", isLoading, children, ...props }) {
   const variants = {

@@ -1,12 +1,23 @@
-﻿"""
-Orchestrator
-Coordinates the multi-agent writing workflow.
+# -*- coding: utf-8 -*-
+"""
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  Orchestrator 编排器 - 协调多智能体写作工作流
+  Coordinates the multi-agent writing workflow with support for research loops,
+  writer context preparation, and real-time progress streaming.
+
+  Heavy method groups are extracted into Mixin classes:
+  - ContextMixin  (_context_mixin.py)  — memory-pack & writer-context preparation
+  - AnalysisMixin (_analysis_mixin.py) — chapter analysis, canon persistence, card creation
 """
 
-from enum import Enum
 import asyncio
 import time
-from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.llm_gateway import get_gateway
@@ -15,34 +26,57 @@ from app.agents import ArchivistAgent, WriterAgent, EditorAgent
 from app.context_engine.select_engine import ContextSelectEngine
 from app.context_engine.trace_collector import trace_collector
 from app.orchestrator.storage_adapter import UnifiedStorageAdapter
+from app.schemas.draft import SceneBrief
 from app.utils.chapter_id import ChapterIDValidator
 from app.utils.logger import get_logger
-from app.schemas.canon import Fact, TimelineEvent, CharacterState
-from app.schemas.draft import ChapterSummary, CardProposal
-from app.schemas.card import CharacterCard, WorldCard, StyleCard
-from app.schemas.evidence import EvidenceItem
 from app.services.chapter_binding_service import chapter_binding_service
+from app.orchestrator._types import SessionStatus
+from app.orchestrator._context_mixin import ContextMixin
+from app.orchestrator._analysis_mixin import AnalysisMixin
 
 logger = get_logger(__name__)
 
 
-class SessionStatus(str, Enum):
-    """Session status values."""
+class Orchestrator(ContextMixin, AnalysisMixin):
+    """
+    编排器 - 协调多智能体写作工作流
 
-    IDLE = "idle"
-    GENERATING_BRIEF = "generating_brief"
-    WRITING_DRAFT = "writing_draft"
-    EDITING = "editing"
-    WAITING_FEEDBACK = "waiting_feedback"
-    WAITING_USER_INPUT = "waiting_user_input"
-    COMPLETED = "completed"
-    ERROR = "error"
+    Orchestrates a multi-agent writing workflow including scene brief generation,
+    research loops, draft writing, and editorial revision. Manages session state,
+    context budgets, and streaming output.
 
+    Attributes:
+        card_storage (CardStorage): 角色/世界观卡片存储 / Character and world card storage.
+        canon_storage (CanonStorage): 事实表和时间线存储 / Canon facts and timeline events storage.
+        draft_storage (DraftStorage): 章节草稿和摘要存储 / Draft and summary storage.
+        gateway (LLMGateway): LLM 调用网关 / Unified LLM gateway.
+        archivist (ArchivistAgent): 档案员智能体 / Agent for scene brief and canon updates.
+        writer (WriterAgent): 撰稿人智能体 / Agent for draft generation.
+        editor (EditorAgent): 编辑智能体 / Agent for revision.
+        select_engine (ContextSelectEngine): 上下文选择引擎 / Context selection engine.
+        progress_callback (Optional[Callable]): 进度更新回调 / Callback for progress updates.
+        current_status (SessionStatus): 当前会话状态 / Current session status.
+        max_iterations (int): 最大修订轮次 / Maximum revision iterations.
+        max_question_rounds (int): 最大提问轮次 / Maximum pre-writing question rounds.
+        max_research_rounds (int): 最大研究轮次 / Maximum research loop rounds.
+    """
 
-class Orchestrator:
-    """Coordinates the multi-agent writing workflow."""
+    def __init__(self, data_dir: Optional[str] = None, progress_callback: Optional[Callable] = None):
+        """
+        初始化编排器 / Initialize the Orchestrator.
 
-    def __init__(self, data_dir: str = "../data", progress_callback: Optional[Callable] = None):
+        Note: Must use consistent path resolution logic with Settings.data_dir
+        to avoid data directory misalignment where drafts are written but
+        not visible to the frontend status interface.
+
+        Args:
+            data_dir: 数据目录路径 / Path to data directory (defaults to Settings.data_dir).
+            progress_callback: 进度更新回调函数 / Async callback for progress events.
+        """
+        if data_dir is None:
+            from app.config import settings
+
+            data_dir = settings.data_dir
         self.card_storage = CardStorage(data_dir)
         self.canon_storage = CanonStorage(data_dir)
         self.draft_storage = DraftStorage(data_dir)
@@ -62,12 +96,17 @@ class Orchestrator:
         self.current_project_id: Optional[str] = None
         self.current_chapter: Optional[str] = None
         self.iteration_count = 0
-        self.max_iterations = 5
         self.question_round = 0
-        self.max_question_rounds = 2
-        self.max_research_rounds = 5
         self._stream_task: Optional[asyncio.Task] = None
         self._last_stream_results: Dict[str, Dict[str, Any]] = {}
+
+        # Load session config from config.yaml with sensible defaults
+        # 从 config.yaml 加载会话配置
+        from app.config import config as app_cfg
+        session_cfg = app_cfg.get("session", {})
+        self.max_iterations = int(session_cfg.get("max_iterations", 5))
+        self.max_question_rounds = int(session_cfg.get("max_question_rounds", 2))
+        self.max_research_rounds = int(session_cfg.get("max_research_rounds", 5))
 
     async def start_session(
         self,
@@ -78,7 +117,35 @@ class Orchestrator:
         target_word_count: int = 3000,
         character_names: Optional[list] = None,
     ) -> Dict[str, Any]:
-        """Start a new writing session."""
+        """
+        开始一个新的写作会话 / Start a new writing session.
+
+        Workflow:
+        1. 档案员生成场景简要 (Scene Brief) / Archivist generates scene brief
+        2. 提出预写问题 (Pre-writing Questions) / Generate pre-writing questions if needed
+        3. 准备写作上下文 / Prepare writer context with memory packs
+        4. 撰稿人生成初稿 (Draft) / Writer generates initial draft
+        5. 编辑修订和反问 / Editor revises or questions are answered
+        6. 返回等待用户反馈 / Wait for user feedback
+
+        Args:
+            project_id: 项目ID / Project identifier.
+            chapter: 章节ID (e.g., V1C001) / Chapter identifier.
+            chapter_title: 章节标题 / Chapter title.
+            chapter_goal: 章节目标 / Chapter writing goal/instruction.
+            target_word_count: 目标字数 / Target word count (default 3000).
+            character_names: 核心角色列表 / Optional character names to focus on.
+
+        Returns:
+            会话开始结果 / Session start result containing:
+            - success: 是否成功 / Whether initialization succeeded.
+            - status: 会话状态 / Current session status.
+            - questions: 预写问题列表 / Pre-writing questions if any.
+            - scene_brief: 场景简要 / Generated scene brief.
+            - context_debug: 上下文调试信息 / Context debugging info.
+            - draft_v1: 初稿 / Initial draft (when ready).
+            - proposals: 设定建议 / Setting proposals from draft.
+        """
         self.current_project_id = project_id
         self.current_chapter = chapter
         self.iteration_count = 0
@@ -86,10 +153,15 @@ class Orchestrator:
         self._last_stream_results = {}
 
         try:
+            # ============================================================================
+            # 步骤 1: 档案员生成场景简要 / Step 1: Archivist generates scene brief
+            # ============================================================================
+            # 场景简要包含：当前情节上下文、相关角色、关键设定事实
+            # Scene brief contains: plot context, relevant characters, key canonical facts
             try:
                 await trace_collector.start_agent_trace("archivist", f"{project_id}:{chapter}")
             except Exception as exc:
-                logger.warning(f"Trace start failed: {exc}")
+                logger.warning("Trace start failed: %s", exc)
 
             await self._update_status(SessionStatus.GENERATING_BRIEF, "Archivist is preparing the scene brief...")
 
@@ -107,14 +179,14 @@ class Orchestrator:
                 try:
                     await trace_collector.end_agent_trace("archivist", status="failed")
                 except Exception as exc:
-                    logger.warning(f"Trace end failed: {exc}")
+                    logger.warning("Trace end failed: %s", exc)
                 return await self._handle_error("Scene brief generation failed")
 
             scene_brief = archivist_result["scene_brief"]
             try:
                 await trace_collector.end_agent_trace("archivist", status="completed")
             except Exception as exc:
-                logger.warning(f"Trace end failed: {exc}")
+                logger.warning("Trace end failed: %s", exc)
 
             context_bundle = await self._prepare_writer_context(
                 project_id=project_id,
@@ -162,7 +234,7 @@ class Orchestrator:
                     token_usage=sum(len(str(i.content)) for i in critical_items + dynamic_items),
                 )
             except Exception as exc:
-                logger.warning(f"Trace writer setup failed: {exc}")
+                logger.warning("Trace writer setup failed: %s", exc)
 
             result = await self._run_writing_flow(
                 project_id=project_id,
@@ -190,12 +262,30 @@ class Orchestrator:
         user_answers: Optional[List[Dict[str, Any]]] = None,
         offline: bool = False,
     ) -> Dict[str, Any]:
-        """Run archivist + research loop only (no draft generation).
+        """
+        仅运行档案员和研究循环，不生成草稿 / Run archivist + research loop only (no draft generation).
 
-        This is used for regression evaluation of agent behaviors:
+        用于回归评测和上下文分析：
+        - 进度事件和跟踪可见性
+        - 检索覆盖率和充分性检查
+        - 提问触发规则
+
+        Used for regression evaluation of agent behaviors:
         - progress events and trace visibility
         - retrieval coverage and sufficiency checks
         - question triggering rules
+
+        Args:
+            project_id: 项目ID / Project identifier.
+            chapter: 章节ID / Chapter identifier.
+            chapter_title: 章节标题 / Chapter title.
+            chapter_goal: 章节目标 / Chapter goal.
+            character_names: 核心角色列表 / Optional character names.
+            user_answers: 用户预写答题 / Optional pre-writing answers.
+            offline: 离线模式 / Offline mode (single research round).
+
+        Returns:
+            研究完成结果 / Research completion result.
         """
         self.current_project_id = project_id
         self.current_chapter = chapter
@@ -206,7 +296,8 @@ class Orchestrator:
             scene_brief = None
             try:
                 scene_brief = await self.draft_storage.get_scene_brief(project_id, chapter)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Failed to load scene_brief for %s:%s: %s", project_id, chapter, exc)
                 scene_brief = None
 
             if not scene_brief and not offline:
@@ -257,108 +348,6 @@ class Orchestrator:
         except Exception as exc:
             return await self._handle_error(f"Research only session error: {exc}")
 
-    async def ensure_memory_pack_payload(
-        self,
-        project_id: str,
-        chapter: str,
-        chapter_goal: Optional[str] = None,
-        scene_brief: Any = None,
-        user_feedback: str = "",
-        force_refresh: bool = False,
-        source: str = "editor",
-    ) -> Optional[Dict[str, Any]]:
-        """Ensure the latest memory pack payload exists for the chapter."""
-        self.current_project_id = project_id
-        self.current_chapter = chapter
-
-        resolved_scene_brief = scene_brief
-        if resolved_scene_brief is None:
-            try:
-                resolved_scene_brief = await self.draft_storage.get_scene_brief(project_id, chapter)
-            except Exception:
-                resolved_scene_brief = None
-
-        goal_text = self._resolve_chapter_goal(chapter_goal or "", resolved_scene_brief, user_feedback)
-        if not goal_text:
-            goal_text = "未提供"
-
-        return await self._prepare_memory_pack_payload(
-            project_id=project_id,
-            chapter=chapter,
-            chapter_goal=goal_text,
-            scene_brief=resolved_scene_brief,
-            user_answers=None,
-            force_refresh=force_refresh,
-            source=source,
-        )
-
-    async def ensure_memory_pack(
-        self,
-        project_id: str,
-        chapter: str,
-        chapter_goal: Optional[str] = None,
-        scene_brief: Any = None,
-        user_feedback: str = "",
-        force_refresh: bool = False,
-        source: str = "editor",
-    ) -> Optional[Dict[str, Any]]:
-        """Ensure the latest memory pack exists for the chapter and return the full pack."""
-        self.current_project_id = project_id
-        self.current_chapter = chapter
-
-        resolved_scene_brief = scene_brief
-        if resolved_scene_brief is None:
-            try:
-                resolved_scene_brief = await self.draft_storage.get_scene_brief(project_id, chapter)
-            except Exception:
-                resolved_scene_brief = None
-
-        goal_text = self._resolve_chapter_goal(chapter_goal or "", resolved_scene_brief, user_feedback)
-        if not goal_text:
-            goal_text = "未提供"
-
-        if not force_refresh:
-            existing_pack = await self._load_memory_pack(project_id, chapter)
-            existing_payload = self._extract_memory_pack_payload(existing_pack)
-            if existing_pack and existing_payload:
-                if not existing_pack.get("card_snapshot"):
-                    try:
-                        existing_pack["card_snapshot"] = await self._build_card_snapshot(project_id, existing_payload)
-                        await self.memory_pack_storage.write_pack(project_id, chapter, existing_pack)
-                    except Exception as exc:
-                        logger.warning(f"Memory pack snapshot enrichment failed: {exc}")
-                await self._emit_progress("使用已生成记忆包", stage="memory_pack", note=source)
-                return existing_pack
-
-        working_memory_payload = await self._build_working_memory_payload(
-            project_id=project_id,
-            chapter=chapter,
-            chapter_goal=goal_text,
-            scene_brief=resolved_scene_brief,
-            user_answers=None,
-        )
-        if not working_memory_payload:
-            if not force_refresh:
-                return None
-            existing_pack = await self._load_memory_pack(project_id, chapter)
-            existing_payload = self._extract_memory_pack_payload(existing_pack)
-            if existing_pack and existing_payload:
-                await self._emit_progress("复用已有记忆包", stage="memory_pack", note="fallback")
-                return existing_pack
-            return None
-
-        saved_pack = await self._save_memory_pack(
-            project_id=project_id,
-            chapter=chapter,
-            chapter_goal=goal_text,
-            scene_brief=resolved_scene_brief,
-            working_memory_payload=working_memory_payload,
-            source=source,
-        )
-        if saved_pack:
-            await self._emit_progress("记忆包已更新", stage="memory_pack", note=source)
-        return saved_pack
-
     async def answer_questions(
         self,
         project_id: str,
@@ -369,7 +358,24 @@ class Orchestrator:
         answers: List[Dict[str, str]],
         character_names: Optional[list] = None,
     ) -> Dict[str, Any]:
-        """Continue session after user answers pre-writing questions."""
+        """
+        用户回答预写问题后继续会话 / Continue session after user answers pre-writing questions.
+
+        处理用户提供的答案，可能产生后续问题或进入正式创作。
+        Process answers, potentially triggering follow-up questions or starting draft.
+
+        Args:
+            project_id: 项目ID / Project identifier.
+            chapter: 章节ID / Chapter identifier.
+            chapter_title: 章节标题 / Chapter title.
+            chapter_goal: 章节目标 / Chapter goal.
+            target_word_count: 目标字数 / Target word count.
+            answers: 用户答题列表 / User answers (list of {question, answer} pairs).
+            character_names: 核心角色列表 / Optional character names.
+
+        Returns:
+            后续会话结果 / Session continuation result.
+        """
         self.current_project_id = project_id
         self.current_chapter = chapter
 
@@ -454,7 +460,31 @@ class Orchestrator:
         action: str = "revise",
         rejected_entities: list = None,
     ) -> Dict[str, Any]:
-        """Process user feedback."""
+        """
+        处理用户反馈（修订或确认） / Process user feedback on draft.
+
+        Handles two main action types:
+        1. 'confirm' - 用户确认当前草稿，进入最终分析 / User confirms draft, proceed to analysis
+        2. 'revise' - 用户提出修改意见，触发修订流程 / User provides revision feedback
+
+        对于短草稿（≤500字）直接触发撰稿人重写；对于长草稿则触发编辑修订。
+
+        For short drafts (≤500 chars), triggers writer rewrite;
+        for longer drafts, triggers editor revision.
+
+        Args:
+            project_id: 项目ID / Project identifier.
+            chapter: 章节ID / Chapter identifier.
+            feedback: 用户反馈内容 / User feedback text.
+            action: 操作类型 / Action type: 'revise' or 'confirm'.
+            rejected_entities: 被否决的设定 / Optional rejected entity names.
+
+        Returns:
+            反馈处理结果 / Feedback processing result.
+
+        Raises:
+            Returns error dict if iterations limit exceeded.
+        """
         if action == "confirm":
             return await self._finalize_chapter(project_id, chapter)
 
@@ -579,352 +609,6 @@ class Orchestrator:
         except Exception as exc:
             return await self._handle_error(f"Finalization error: {exc}")
 
-    def _resolve_chapter_goal(self, chapter_goal: str, scene_brief: Any, fallback_text: str = "") -> str:
-        goal_text = str(chapter_goal or "").strip()
-        if not goal_text and scene_brief is not None:
-            goal_text = str(getattr(scene_brief, "goal", "") or "").strip()
-        if not goal_text and fallback_text:
-            goal_text = str(fallback_text or "").strip()
-        if not goal_text and scene_brief is not None:
-            goal_text = str(getattr(scene_brief, "summary", "") or getattr(scene_brief, "title", "") or "").strip()
-
-        feedback = str(fallback_text or "").strip()
-        if feedback:
-            if not goal_text:
-                goal_text = feedback
-            else:
-                # Editor flows pass user_feedback as fallback_text. Even when a scene brief exists,
-                # we still want the latest instruction to influence retrieval/entity extraction.
-                if feedback not in goal_text:
-                    goal_text = f"{goal_text}\n\n用户最新指令：{feedback}"
-        return goal_text
-
-    async def _build_working_memory_payload(
-        self,
-        project_id: str,
-        chapter: str,
-        chapter_goal: str,
-        scene_brief: Any,
-        user_answers: Optional[List[Dict[str, Any]]] = None,
-        offline: bool = False,
-    ) -> Optional[Dict[str, Any]]:
-        working_memory_payload = None
-        try:
-            working_memory_payload = await self._run_research_loop(
-                project_id=project_id,
-                chapter=chapter,
-                chapter_goal=chapter_goal,
-                scene_brief=scene_brief,
-                user_answers=user_answers,
-                offline=offline,
-            )
-        except Exception as exc:
-            logger.warning(f"Research loop failed: {exc}")
-
-        if not working_memory_payload:
-            try:
-                from app.services.working_memory_service import working_memory_service
-                working_memory_payload = await working_memory_service.prepare(
-                    project_id=project_id,
-                    chapter=chapter,
-                    scene_brief=scene_brief,
-                    chapter_goal=chapter_goal,
-                    user_answers=user_answers,
-                    force_minimum_questions=False,
-                )
-            except Exception as exc:
-                logger.warning(f"Working memory build failed: {exc}")
-
-        if working_memory_payload and not working_memory_payload.get("research_stop_reason"):
-            working_memory_payload["questions"] = []
-
-        return working_memory_payload
-
-    async def _load_memory_pack(self, project_id: str, chapter: str) -> Optional[Dict[str, Any]]:
-        try:
-            return await self.memory_pack_storage.read_pack(project_id, chapter)
-        except Exception as exc:
-            logger.warning(f"Memory pack read failed: {exc}")
-        return None
-
-    def _extract_memory_pack_payload(self, pack: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if not pack:
-            return None
-        payload = pack.get("payload") or pack.get("working_memory_payload")
-        if isinstance(payload, dict):
-            return payload
-        return None
-
-    async def _save_memory_pack(
-        self,
-        project_id: str,
-        chapter: str,
-        chapter_goal: str,
-        scene_brief: Any,
-        working_memory_payload: Optional[Dict[str, Any]],
-        source: str,
-    ) -> Optional[Dict[str, Any]]:
-        if not working_memory_payload:
-            return None
-        card_snapshot = await self._build_card_snapshot(project_id, working_memory_payload)
-        pack = {
-            "chapter": chapter,
-            "built_at": datetime.now(timezone.utc).isoformat(),
-            "source": source,
-            "chapter_goal": chapter_goal,
-            "scene_brief": {
-                "title": str(getattr(scene_brief, "title", "") or ""),
-                "goal": str(getattr(scene_brief, "goal", "") or ""),
-            } if scene_brief is not None else {},
-            "card_snapshot": card_snapshot,
-            "payload": working_memory_payload,
-        }
-        try:
-            await self.memory_pack_storage.write_pack(project_id, chapter, pack)
-            return pack
-        except Exception as exc:
-            logger.warning(f"Memory pack save failed: {exc}")
-            return None
-
-    async def _prepare_memory_pack_payload(
-        self,
-        project_id: str,
-        chapter: str,
-        chapter_goal: str,
-        scene_brief: Any,
-        user_answers: Optional[List[Dict[str, Any]]] = None,
-        force_refresh: bool = False,
-        source: str = "writer",
-    ) -> Optional[Dict[str, Any]]:
-        existing_pack: Optional[Dict[str, Any]] = None
-        if not force_refresh:
-            existing_pack = await self._load_memory_pack(project_id, chapter)
-            existing_payload = self._extract_memory_pack_payload(existing_pack)
-            if existing_payload:
-                await self._emit_progress("使用已生成记忆包", stage="memory_pack", note=source)
-                return existing_payload
-
-        working_memory_payload = await self._build_working_memory_payload(
-            project_id=project_id,
-            chapter=chapter,
-            chapter_goal=chapter_goal,
-            scene_brief=scene_brief,
-            user_answers=user_answers,
-        )
-
-        if working_memory_payload:
-            await self._save_memory_pack(
-                project_id=project_id,
-                chapter=chapter,
-                chapter_goal=chapter_goal,
-                scene_brief=scene_brief,
-                working_memory_payload=working_memory_payload,
-                source=source,
-            )
-            await self._emit_progress("记忆包已更新", stage="memory_pack", note=source)
-            return working_memory_payload
-
-        if force_refresh:
-            existing_pack = await self._load_memory_pack(project_id, chapter)
-            existing_payload = self._extract_memory_pack_payload(existing_pack)
-            if existing_payload:
-                await self._emit_progress("复用已有记忆包", stage="memory_pack", note="fallback")
-                return existing_payload
-
-        return None
-
-    async def _build_card_snapshot(self, project_id: str, working_memory_payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Build compact snapshots of relevant cards to reduce editor hallucinations."""
-        evidence_items = ((working_memory_payload.get("evidence_pack") or {}).get("items") or [])
-        seed_entities = working_memory_payload.get("seed_entities") or []
-
-        card_names: List[str] = []
-        for item in evidence_items:
-            if not isinstance(item, dict):
-                continue
-            source = item.get("source") or {}
-            card = str(source.get("card") or "").strip()
-            if card and card not in card_names:
-                card_names.append(card)
-        for name in seed_entities:
-            n = str(name or "").strip()
-            if n and n not in card_names:
-                card_names.append(n)
-        card_names = card_names[:12]
-
-        characters = []
-        world = []
-        for name in card_names:
-            try:
-                char_card = await self.card_storage.get_character_card(project_id, name)
-            except Exception:
-                char_card = None
-            if char_card:
-                characters.append(char_card.model_dump(mode="json"))
-                continue
-            try:
-                world_card = await self.card_storage.get_world_card(project_id, name)
-            except Exception:
-                world_card = None
-            if world_card:
-                world.append(world_card.model_dump(mode="json"))
-
-        style = None
-        try:
-            style_card = await self.card_storage.get_style_card(project_id)
-            if style_card:
-                style = style_card.model_dump(mode="json")
-        except Exception:
-            style = None
-
-        return {"characters": characters[:8], "world": world[:8], "style": style}
-
-    async def _prepare_writer_context(
-        self,
-        project_id: str,
-        chapter: str,
-        chapter_goal: str,
-        scene_brief: Any,
-        character_names: Optional[list],
-        user_answers: Optional[List[Dict[str, Any]]] = None,
-        force_refresh_memory_pack: bool = True,
-        memory_pack_source: str = "writer",
-    ) -> Dict[str, Any]:
-        """Prepare context for writer and return trace info."""
-        critical_items = await self.select_engine.deterministic_select(
-            project_id, "writer", self.storage_adapter
-        )
-
-        query = f"{scene_brief.title} {scene_brief.goal}" if scene_brief else chapter_goal
-        try:
-            from app.services.chapter_binding_service import chapter_binding_service
-            seeds = await chapter_binding_service.get_seed_entities(
-                project_id,
-                chapter,
-                window=2,
-                ensure_built=True,
-            )
-            if seeds:
-                query = f"{query} {' '.join(seeds)}".strip()
-        except Exception:
-            seeds = []
-        dynamic_items = await self.select_engine.retrieval_select(
-            project_id=project_id,
-            query=query,
-            item_types=["character", "world", "fact", "text_chunk"],
-            storage=self.storage_adapter,
-            top_k=10,
-        )
-
-        style_card = next((item.content for item in critical_items if item.type.value == "style_card"), None)
-
-        character_cards = []
-        world_cards = []
-        facts = []
-        text_chunks = []
-
-        for item in dynamic_items:
-            if item.type.value == "character":
-                name = item.id.replace("char_", "")
-                card = await self.card_storage.get_character_card(project_id, name)
-                if card:
-                    character_cards.append(card)
-            elif item.type.value == "world":
-                name = item.id.replace("world_", "")
-                card = await self.card_storage.get_world_card(project_id, name)
-                if card:
-                    world_cards.append(card)
-            elif item.type.value == "fact":
-                facts.append(item.content)
-            elif item.type.value == "text_chunk":
-                source = item.metadata.get("source") or {}
-                text_chunks.append(
-                    {
-                        "text": item.content,
-                        "chapter": source.get("chapter"),
-                        "source": source,
-                    }
-                )
-
-        timeline = await self.canon_storage.get_all_timeline_events(project_id)
-        character_states = await self.canon_storage.get_all_character_states(project_id)
-
-        context_package = await self.draft_storage.get_context_for_writing(project_id, chapter)
-
-        base_tokens = 2000
-        base_tokens += sum(len(str(c)) // 2 for c in critical_items)
-        base_tokens += sum(len(str(i.content)) // 2 for i in dynamic_items)
-
-        safe_limit = 12000
-        context_budget = max(0, safe_limit - base_tokens)
-        trimmed_context, trim_stats = self._trim_context_package(context_package, context_budget)
-        if trim_stats["trimmed"]:
-            try:
-                await trace_collector.record_context_compress(
-                    "archivist",
-                    before_tokens=trim_stats["before"],
-                    after_tokens=trim_stats["after"],
-                    method="drop_low_priority_context",
-                )
-            except Exception as exc:
-                logger.warning(f"Trace compress failed: {exc}")
-        context_package = trimmed_context
-
-        tail_chunks = context_package.get("previous_tail_chunks") or []
-        if tail_chunks:
-            seen = {(item.get("chapter"), item.get("text")) for item in text_chunks if isinstance(item, dict)}
-            for chunk in tail_chunks:
-                if not isinstance(chunk, dict):
-                    continue
-                key = (chunk.get("chapter"), chunk.get("text"))
-                if key in seen:
-                    continue
-                text_chunks.append(chunk)
-                seen.add(key)
-
-        if character_names:
-            for name in character_names:
-                if not any(getattr(c, "name", None) == name for c in character_cards):
-                    card = await self.card_storage.get_character_card(project_id, name)
-                    if card:
-                        character_cards.append(card)
-
-        working_memory_payload = await self._prepare_memory_pack_payload(
-            project_id=project_id,
-            chapter=chapter,
-            chapter_goal=chapter_goal,
-            scene_brief=scene_brief,
-            user_answers=user_answers,
-            force_refresh=force_refresh_memory_pack,
-            source=memory_pack_source,
-        )
-
-        writer_context = {
-            "scene_brief": scene_brief,
-            "chapter_goal": chapter_goal,
-            "style_card": style_card,
-            "character_cards": character_cards,
-            "world_cards": world_cards,
-            "facts": facts,
-            "text_chunks": text_chunks,
-            "timeline": timeline,
-            "character_states": character_states,
-            "context_package": context_package,
-        }
-        if working_memory_payload:
-            writer_context["working_memory"] = working_memory_payload.get("working_memory")
-            writer_context["evidence_pack"] = working_memory_payload.get("evidence_pack")
-            writer_context["gaps"] = working_memory_payload.get("gaps")
-            writer_context["unresolved_gaps"] = working_memory_payload.get("unresolved_gaps")
-
-        return {
-            "writer_context": writer_context,
-            "critical_items": critical_items,
-            "dynamic_items": dynamic_items,
-            "questions": working_memory_payload.get("questions") if working_memory_payload else [],
-            "working_memory_payload": working_memory_payload,
-        }
-
     async def _run_writing_flow(
         self,
         project_id: str,
@@ -933,7 +617,29 @@ class Orchestrator:
         target_word_count: int,
         working_memory_payload: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Run writer flow and wait for user feedback."""
+        """
+        执行写作流：启动流式输出并等待反馈 / Run writer flow and wait for user feedback.
+
+        步骤 / Steps:
+        1. 更新状态为 WRITING_DRAFT / Update status to WRITING_DRAFT
+        2. 取消任何现有的流式任务 / Cancel any existing stream task
+        3. 创建新的流式任务并等待完成 / Create new stream task and wait
+        4. 检测设定建议 / Detect setting proposals from draft
+        5. 返回草稿和设定建议供用户反馈 / Return draft and proposals for feedback
+
+        注意：使用后置刷新策略避免每次修订都重建记忆包
+        Note: Uses post-write refresh to avoid rebuilding memory packs on every revision
+
+        Args:
+            project_id: 项目ID / Project identifier.
+            chapter: 章节ID / Chapter identifier.
+            writer_context: 写作上下文 / Context for writer agent.
+            target_word_count: 目标字数 / Target word count.
+            working_memory_payload: 工作记忆载荷 / Working memory payload for tracking.
+
+        Returns:
+            写作流程结果 / Writing flow result with draft and proposals.
+        """
         await self._update_status(SessionStatus.WRITING_DRAFT, "Writer is drafting...")
 
         writer_payload = dict(writer_context)
@@ -981,6 +687,20 @@ class Orchestrator:
         draft_text = draft.content if hasattr(draft, "content") else str(draft)
         proposals = await self._detect_proposals(project_id, draft_text)
 
+        if self._needs_memory_pack_refresh(working_memory_payload):
+            try:
+                await self.ensure_memory_pack(
+                    project_id=project_id,
+                    chapter=chapter,
+                    chapter_goal=writer_context.get("chapter_goal") or "",
+                    scene_brief=writer_context.get("scene_brief"),
+                    user_feedback="",
+                    force_refresh=True,
+                    source="writer_post",
+                )
+            except Exception as exc:
+                logger.warning("Post-write memory pack refresh failed: %s", exc)
+
         return {
             "success": True,
             "status": SessionStatus.WAITING_FEEDBACK,
@@ -989,19 +709,63 @@ class Orchestrator:
             "proposals": proposals,
         }
 
+    def _needs_memory_pack_refresh(self, payload: Optional[Dict[str, Any]]) -> bool:
+        if not payload:
+            return True
+        evidence_pack = payload.get("evidence_pack") or {}
+        items = evidence_pack.get("items") or []
+        stats = evidence_pack.get("stats") or {}
+        total = stats.get("total")
+        if isinstance(total, int) and total > 0:
+            return False
+        if items:
+            return False
+        working_memory = payload.get("working_memory")
+        if isinstance(working_memory, str) and working_memory.strip():
+            return False
+        return True
+
     async def _run_research_loop(
         self,
         project_id: str,
         chapter: str,
         chapter_goal: str,
-        scene_brief: Any,
+        scene_brief: Optional[SceneBrief],
         user_answers: Optional[List[Dict[str, Any]]] = None,
         offline: bool = False,
     ) -> Optional[Dict[str, Any]]:
-        """Run multi-round research loop (max rounds with early stop)."""
+        """
+        执行多轮研究循环（带提前停止） / Run multi-round research loop (max rounds with early stop).
+
+        研究循环工作流 / Research loop workflow:
+        1. 提取初始缺口 / Extract initial knowledge gaps
+        2. 生成研究计划 / Generate research plan
+        3. 执行检索 / Execute retrieval
+        4. 评估充分性 / Assess evidence sufficiency
+        5. 停止条件：证据充分、达到最大轮次、或无法产生新查询
+
+        Stop conditions:
+        - 'sufficient' - 证据充分 / Evidence is sufficient
+        - 'max_rounds' - 达到最大轮次 / Maximum rounds reached
+        - 'no_queries' - 无法产生查询 / Cannot generate queries
+        - 'offline_stop' - 离线模式停止 / Offline mode stop
+        - 'empty_payload' - 检索无结果 / Retrieval returned empty
+
+        Args:
+            project_id: 项目ID / Project identifier.
+            chapter: 章节ID / Chapter identifier.
+            chapter_goal: 章节目标 / Chapter goal.
+            scene_brief: 场景简要 / Scene brief (optional).
+            user_answers: 用户答题 / User answers (optional).
+            offline: 离线模式 / Offline mode flag.
+
+        Returns:
+            研究载荷 / Research payload with evidence and questions, or None if failed.
+        """
         try:
             from app.services.working_memory_service import working_memory_service
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to import working_memory_service: %s", exc)
             return None
 
         research_trace: List[Dict[str, Any]] = []
@@ -1078,7 +842,7 @@ class Orchestrator:
                         note=str(plan.get("note") or ""),
                     )
         except Exception as exc:
-            logger.warning(f"Initial research plan failed: {exc}")
+            logger.warning("Initial research plan failed: %s", exc)
 
         for round_index in range(1, self.max_research_rounds + 1):
             await self._emit_progress(
@@ -1101,7 +865,8 @@ class Orchestrator:
                 user_answers=user_answers,
                 extra_queries=merged_extra_queries,
                 force_minimum_questions=False,
-                semantic_rerank=not offline,
+                semantic_rerank=False if offline else None,
+                round_index=round_index,
             )
             if not payload:
                 stop_reason = "empty_payload"
@@ -1276,7 +1041,31 @@ class Orchestrator:
         writer_payload: Dict[str, Any],
         working_memory_payload: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Stream writer output to client while persisting the final draft."""
+        """
+        流式处理撰稿人输出并持久化最终草稿 / Stream writer output to client while persisting the final draft.
+
+        处理步骤 / Processing steps:
+        1. 发送流开始事件 / Send stream start event
+        2. 逐token接收和转发撰稿人输出 / Receive and forward tokens from writer
+        3. 收集完整文本 / Collect complete text
+        4. 检测设定建议 / Detect proposals from content
+        5. 保存为版本1草稿 / Save as v1 draft
+        6. 发送流结束事件 / Send stream end event
+
+        错误处理 / Error handling:
+        - 空内容错误 / Empty content raises RuntimeError
+        - 被取消的流任务正常退出 / Cancelled streams exit gracefully
+        - 进度回调异常被捕获不阻断流程 / Callback exceptions don't block streaming
+
+        Args:
+            project_id: 项目ID / Project identifier.
+            chapter: 章节ID / Chapter identifier.
+            writer_payload: 撰稿人载荷 / Writer context payload.
+            working_memory_payload: 工作记忆 / Optional working memory for tracking.
+
+        Raises:
+            RuntimeError: 如果最终文本为空 / If final text is empty.
+        """
         await self._emit_progress("正在撰写...", stage="writing", status="writing")
         if self.progress_callback:
             await self.progress_callback({
@@ -1393,173 +1182,6 @@ class Orchestrator:
             "iteration": self.iteration_count,
         }
 
-    async def analyze_chapter(
-        self,
-        project_id: str,
-        chapter: str,
-        content: Optional[str] = None,
-        chapter_title: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Manually trigger analysis for a chapter (no persistence)."""
-        try:
-            draft_content = content or ""
-            if not draft_content:
-                versions = await self.draft_storage.list_draft_versions(project_id, chapter)
-                if not versions:
-                    return {"success": False, "error": "No draft found"}
-
-                latest = versions[-1]
-                draft = await self.draft_storage.get_draft(project_id, chapter, latest)
-                if not draft:
-                    return {"success": False, "error": "Draft content missing"}
-                draft_content = draft.content
-
-            self.current_project_id = project_id
-            self.current_chapter = chapter
-            await self._update_status(SessionStatus.GENERATING_BRIEF, "Analyzing content...")
-
-            analysis = await self._build_analysis(
-                project_id=project_id,
-                chapter=chapter,
-                content=draft_content,
-                chapter_title=chapter_title,
-            )
-
-            await self._update_status(SessionStatus.IDLE, "Analysis completed.")
-            return {"success": True, "analysis": analysis}
-        except Exception as exc:
-            return await self._handle_error(f"Analysis failed: {exc}")
-
-    async def _build_analysis(
-        self,
-        project_id: str,
-        chapter: str,
-        content: str,
-        chapter_title: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Build analysis payload (summary, facts, proposals) without persisting."""
-        scene_brief = await self.draft_storage.get_scene_brief(project_id, chapter)
-        title = chapter_title or (scene_brief.title if scene_brief and scene_brief.title else chapter)
-
-        summary = await self.archivist.generate_chapter_summary(
-            project_id=project_id,
-            chapter=chapter,
-            chapter_title=title,
-            final_draft=content,
-        )
-        volume_id = summary.volume_id or ChapterIDValidator.extract_volume_id(chapter) or "V1"
-        summary_data = summary.model_dump()
-        summary_data["chapter"] = chapter
-        summary_data["volume_id"] = volume_id
-        summary_data["word_count"] = len(content)
-        if not summary_data.get("title"):
-            summary_data["title"] = title
-        summary = ChapterSummary(**summary_data)
-
-        canon_updates = await self.archivist.extract_canon_updates(
-            project_id=project_id,
-            chapter=chapter,
-            final_draft=content,
-        )
-
-        facts = canon_updates.get("facts", []) or []
-        if len(facts) > 5:
-            facts = facts[:5]
-
-        proposals = await self._detect_proposals(project_id, content)
-
-        return {
-            "summary": summary.model_dump(),
-            "facts": [fact.model_dump() for fact in facts],
-            "timeline_events": [event.model_dump() for event in canon_updates.get("timeline_events", []) or []],
-            "character_states": [state.model_dump() for state in canon_updates.get("character_states", []) or []],
-            "proposals": proposals or [],
-        }
-
-    async def analyze_sync(self, project_id: str, chapters: List[str]) -> Dict[str, Any]:
-        """Batch analyze and overwrite summaries/facts/cards for selected chapters."""
-        results = []
-        chapter_list = [str(ch).strip() for ch in (chapters or []) if str(ch).strip()]
-        chapters = ChapterIDValidator.sort_chapters(chapter_list)
-        total = len(chapters)
-        completed = 0
-
-        async def emit_progress(message: str) -> None:
-            if not self.progress_callback:
-                return
-            await self.progress_callback(
-                {
-                    "status": "sync",
-                    "message": message,
-                    "project_id": project_id,
-                }
-            )
-
-        if total == 0:
-            return {"success": True, "results": []}
-
-        for chapter in chapters:
-            try:
-                completed += 1
-                await emit_progress(f"同步分析中 ({completed}/{total})：{chapter}")
-                versions = await self.draft_storage.list_draft_versions(project_id, chapter)
-                if not versions:
-                    results.append({"chapter": chapter, "success": False, "error": "No draft found"})
-                    continue
-                latest = versions[-1]
-                draft = await self.draft_storage.get_draft(project_id, chapter, latest)
-                if not draft:
-                    results.append({"chapter": chapter, "success": False, "error": "Draft content missing"})
-                    continue
-                analysis = await self._build_analysis(
-                    project_id=project_id,
-                    chapter=chapter,
-                    content=draft.content,
-                    chapter_title=None,
-                )
-                await emit_progress(f"同步保存中 ({completed}/{total})：{chapter}")
-                save_result = await self.save_analysis(
-                    project_id=project_id,
-                    chapter=chapter,
-                    analysis=analysis,
-                    overwrite=True,
-                )
-                bindings_result = {"bindings_built": False}
-                try:
-                    from app.services.chapter_binding_service import chapter_binding_service
-                    await emit_progress(f"同步绑定中 ({completed}/{total})：{chapter}")
-                    focus_characters: List[str] = []
-                    try:
-                        focus_characters = await self.archivist.bind_focus_characters(
-                            project_id=project_id,
-                            chapter=chapter,
-                            final_draft=draft.content,
-                            limit=5,
-                        )
-                    except Exception as exc:
-                        bindings_result["focus_error"] = str(exc)
-
-                    base_binding = await chapter_binding_service.build_bindings(project_id, chapter, force=True)
-                    if focus_characters:
-                        base_binding["characters"] = focus_characters
-                        base_binding["focus_characters"] = focus_characters
-                        base_binding["binding_method"] = "llm_focus"
-                    else:
-                        base_binding["binding_method"] = base_binding.get("binding_method") or "algorithmic"
-
-                    await chapter_binding_service.write_bindings(project_id, chapter, base_binding)
-                    bindings_result["bindings_built"] = True
-                    bindings_result["binding_method"] = base_binding.get("binding_method")
-                    bindings_result["focus_characters"] = focus_characters
-                except Exception as exc:
-                    bindings_result["bindings_error"] = str(exc)
-                results.append({"chapter": chapter, **save_result, **bindings_result})
-            except Exception as exc:
-                results.append({"chapter": chapter, "success": False, "error": str(exc)})
-
-        await emit_progress("同步完成")
-        return {"success": True, "results": results}
-
     def _collect_pending_confirmations(
         self,
         final_text: str,
@@ -1579,56 +1201,6 @@ class Orchestrator:
         merged = list(dict.fromkeys(confirmations + gap_texts + missing_entities))
         return merged[:12]
 
-    async def _persist_research_trace_memory(
-        self,
-        project_id: str,
-        chapter: str,
-        working_memory_payload: Optional[Dict[str, Any]],
-    ) -> None:
-        if not working_memory_payload:
-            return
-        trace = working_memory_payload.get("research_trace") or []
-        stop_reason = working_memory_payload.get("research_stop_reason") or ""
-        report = working_memory_payload.get("sufficiency_report") or {}
-        if not trace:
-            return
-
-        lines = [f"研究轮次: {len(trace)}", f"停止原因: {stop_reason or 'unknown'}"]
-        if report:
-            needs = "是" if report.get("needs_user_input") else "否"
-            lines.append(f"证据不足需反问: {needs}")
-            weak = report.get("weak_gaps") or []
-            if weak:
-                lines.append("薄弱缺口: " + "；".join([str(item) for item in weak[:4]]))
-
-        for item in trace[:5]:
-            if not isinstance(item, dict):
-                continue
-            queries = item.get("queries") or []
-            types = item.get("types") or {}
-            count = item.get("count")
-            lines.append(f"第{item.get('round')}轮: {', '.join(queries[:4])} | types={types} | count={count}")
-
-        text = "\n".join([line for line in lines if line])
-        if not text:
-            return
-
-        try:
-            from app.services.evidence_service import evidence_service
-        except Exception:
-            return
-
-        item = EvidenceItem(
-            id=f"memory:research:{int(time.time())}",
-            type="memory",
-            text=text,
-            source={"chapter": chapter, "kind": "research_trace"},
-            scope="chapter",
-            entities=[],
-            meta={"kind": "research_trace"},
-        )
-        await evidence_service.append_memory_items(project_id, [item])
-
     async def _emit_progress(self, message: str, **kwargs) -> None:
         if not self.progress_callback:
             return
@@ -1644,284 +1216,6 @@ class Orchestrator:
             if value is not None:
                 payload[key] = value
         await self.progress_callback(payload)
-
-    async def analyze_batch(self, project_id: str, chapters: List[str]) -> Dict[str, Any]:
-        """Batch analyze chapters and return analysis payload."""
-        results = []
-        for chapter in chapters:
-            try:
-                versions = await self.draft_storage.list_draft_versions(project_id, chapter)
-                if not versions:
-                    results.append({"chapter": chapter, "success": False, "error": "No draft found"})
-                    continue
-                latest = versions[-1]
-                draft = await self.draft_storage.get_draft(project_id, chapter, latest)
-                if not draft:
-                    results.append({"chapter": chapter, "success": False, "error": "Draft content missing"})
-                    continue
-                analysis = await self._build_analysis(
-                    project_id=project_id,
-                    chapter=chapter,
-                    content=draft.content,
-                    chapter_title=None,
-                )
-                results.append({"chapter": chapter, "success": True, "analysis": analysis})
-            except Exception as exc:
-                results.append({"chapter": chapter, "success": False, "error": str(exc)})
-
-        return {"success": True, "results": results}
-
-    async def save_analysis_batch(
-        self,
-        project_id: str,
-        items: List[Dict[str, Any]],
-        overwrite: bool = False,
-    ) -> Dict[str, Any]:
-        """Persist analysis payload batch."""
-        results = []
-        for item in items:
-            chapter = item.get("chapter")
-            analysis = item.get("analysis", {}) if isinstance(item, dict) else {}
-            if not chapter:
-                results.append({"chapter": "", "success": False, "error": "Missing chapter"})
-                continue
-            try:
-                result = await self.save_analysis(
-                    project_id=project_id,
-                    chapter=chapter,
-                    analysis=analysis,
-                    overwrite=overwrite,
-                )
-                results.append({"chapter": chapter, **result})
-            except Exception as exc:
-                results.append({"chapter": chapter, "success": False, "error": str(exc)})
-        return {"success": True, "results": results}
-
-    async def save_analysis(
-        self,
-        project_id: str,
-        chapter: str,
-        analysis: Dict[str, Any],
-        overwrite: bool = False,
-    ) -> Dict[str, Any]:
-        """Persist analysis output (summary, facts, cards)."""
-        try:
-            summary_data = analysis.get("summary", {}) or {}
-            summary_data["chapter"] = self._normalize_chapter_id(
-                summary_data.get("chapter") or chapter
-            )
-            summary = ChapterSummary(**summary_data)
-            summary.new_facts = []
-            if not summary.volume_id:
-                summary.volume_id = ChapterIDValidator.extract_volume_id(summary.chapter) or "V1"
-            if not summary.title:
-                summary.title = chapter
-
-            await self.draft_storage.save_chapter_summary(project_id, summary)
-
-            volume_summaries = await self.draft_storage.list_chapter_summaries(
-                project_id,
-                volume_id=summary.volume_id,
-            )
-            volume_summary = await self.archivist.generate_volume_summary(
-                project_id=project_id,
-                volume_id=summary.volume_id,
-                chapter_summaries=volume_summaries,
-            )
-            await self.draft_storage.volume_storage.save_volume_summary(project_id, volume_summary)
-
-            facts_saved = 0
-            timeline_saved = 0
-            states_saved = 0
-
-            if overwrite:
-                await self.canon_storage.normalize_fact_records(project_id)
-                await self.canon_storage.delete_facts_by_chapter(project_id, summary.chapter)
-
-            existing_facts = await self.canon_storage.get_all_facts_raw(project_id)
-            existing_ids = {item.get("id") for item in existing_facts if item.get("id")}
-            next_fact_index = len(existing_facts) + 1
-
-            facts_input = analysis.get("facts", []) or []
-            if len(facts_input) > 5:
-                facts_input = facts_input[:5]
-
-            for item in facts_input:
-                fact_data = item if isinstance(item, dict) else {}
-                fact_data = {**fact_data}
-                if not fact_data.get("statement") and not fact_data.get("content"):
-                    continue
-                fact_data["statement"] = fact_data.get("statement") or fact_data.get("content") or ""
-                fact_data["source"] = fact_data.get("source") or summary.chapter
-                fact_data["introduced_in"] = fact_data.get("introduced_in") or summary.chapter
-                if not fact_data.get("id") or fact_data.get("id") in existing_ids:
-                    fact_data["id"] = f"F{next_fact_index:04d}"
-                    next_fact_index += 1
-                existing_ids.add(fact_data["id"])
-                await self.canon_storage.add_fact(project_id, Fact(**fact_data))
-                facts_saved += 1
-
-            for item in analysis.get("timeline_events", []) or []:
-                event_data = item if isinstance(item, dict) else {}
-                event_data = {**event_data, "source": event_data.get("source") or chapter}
-                await self.canon_storage.add_timeline_event(project_id, TimelineEvent(**event_data))
-                timeline_saved += 1
-
-            for item in analysis.get("character_states", []) or []:
-                state_data = item if isinstance(item, dict) else {}
-                if not state_data.get("character"):
-                    continue
-                state_data = {**state_data, "last_seen": state_data.get("last_seen") or chapter}
-                await self.canon_storage.update_character_state(project_id, CharacterState(**state_data))
-                states_saved += 1
-
-            cards_created = await self._create_cards_from_proposals(
-                project_id=project_id,
-                proposals=analysis.get("proposals", []) or [],
-                overwrite=overwrite,
-            )
-
-            return {
-                "success": True,
-                "stats": {
-                    "facts_saved": facts_saved,
-                    "timeline_saved": timeline_saved,
-                    "states_saved": states_saved,
-                    "cards_created": cards_created,
-                },
-            }
-        except Exception as exc:
-            return await self._handle_error(f"Analysis save failed: {exc}")
-
-    async def _analyze_content(self, project_id: str, chapter: str, content: str):
-        """Run post-draft analysis (summaries + canon updates)."""
-        try:
-            normalized_chapter = self._normalize_chapter_id(chapter)
-            scene_brief = await self.draft_storage.get_scene_brief(project_id, chapter)
-            chapter_title = scene_brief.title if scene_brief and scene_brief.title else chapter
-
-            summary = await self.archivist.generate_chapter_summary(
-                project_id=project_id,
-                chapter=normalized_chapter,
-                chapter_title=chapter_title,
-                final_draft=content,
-            )
-            summary.chapter = normalized_chapter
-            await self.draft_storage.save_chapter_summary(project_id, summary)
-
-            volume_id = ChapterIDValidator.extract_volume_id(normalized_chapter) or "V1"
-            volume_summaries = await self.draft_storage.list_chapter_summaries(project_id, volume_id=volume_id)
-            volume_summary = await self.archivist.generate_volume_summary(
-                project_id=project_id,
-                volume_id=volume_id,
-                chapter_summaries=volume_summaries,
-            )
-            await self.draft_storage.volume_storage.save_volume_summary(project_id, volume_summary)
-        except Exception as exc:
-            logger.warning(f"Failed to generate summaries: {exc}")
-
-        try:
-            canon_updates = await self.archivist.extract_canon_updates(
-                project_id=project_id,
-                chapter=normalized_chapter,
-                final_draft=content,
-            )
-
-            for fact in canon_updates.get("facts", []) or []:
-                await self.canon_storage.add_fact(project_id, fact)
-
-            for event in canon_updates.get("timeline_events", []) or []:
-                await self.canon_storage.add_timeline_event(project_id, event)
-
-            for state in canon_updates.get("character_states", []) or []:
-                await self.canon_storage.update_character_state(project_id, state)
-
-            try:
-                report = await self.canon_storage.detect_conflicts(
-                    project_id=project_id,
-                    chapter=chapter,
-                    new_facts=canon_updates.get("facts", []) or [],
-                    new_timeline_events=canon_updates.get("timeline_events", []) or [],
-                    new_character_states=canon_updates.get("character_states", []) or [],
-                )
-                await self.draft_storage.save_conflict_report(
-                    project_id=project_id,
-                    chapter=chapter,
-                    report=report,
-                )
-            except Exception as exc:
-                logger.warning(f"Failed to detect conflicts: {exc}")
-        except Exception as exc:
-            logger.warning(f"Failed to update canon: {exc}")
-
-    async def _detect_proposals(self, project_id: str, content: Any) -> List[Dict]:
-        """Detect setting proposals from content."""
-        try:
-            if hasattr(content, "content"):
-                content_text = content.content
-            else:
-                content_text = str(content)
-
-            chars = await self.card_storage.list_character_cards(project_id)
-            worlds = await self.card_storage.list_world_cards(project_id)
-            existing = chars + worlds
-
-            proposals = await self.archivist.detect_setting_changes(content_text, existing)
-            return [p.model_dump() for p in proposals]
-        except Exception as exc:
-            logger.warning(f"Proposal detection failed: {exc}")
-            return []
-
-    async def _create_cards_from_proposals(
-        self,
-        project_id: str,
-        proposals: List[Dict[str, Any]],
-        overwrite: bool = False,
-    ) -> int:
-        """Create cards from proposals. Returns created count."""
-        created = 0
-        for item in proposals:
-            try:
-                proposal = CardProposal(**(item or {}))
-            except Exception:
-                continue
-
-            name = (proposal.name or "").strip()
-            if not name:
-                continue
-
-            ptype = (proposal.type or "").lower()
-            if ptype == "character":
-                existing = await self.card_storage.get_character_card(project_id, name)
-                if existing and not overwrite:
-                    continue
-                card = CharacterCard(
-                    name=name,
-                    description=self._merge_card_description(
-                        proposal.description,
-                        proposal.rationale,
-                    ),
-                )
-                await self.card_storage.save_character_card(project_id, card)
-                created += 1
-                continue
-
-            if ptype == "world":
-                existing = await self.card_storage.get_world_card(project_id, name)
-                if existing and not overwrite:
-                    continue
-                card = WorldCard(
-                    name=name,
-                    description=self._merge_card_description(
-                        proposal.description,
-                        proposal.rationale,
-                    ),
-                )
-                await self.card_storage.save_world_card(project_id, card)
-                created += 1
-                continue
-
-        return created
 
     def _normalize_chapter_id(self, chapter_id: str) -> str:
         if not chapter_id:
@@ -1950,7 +1244,11 @@ class Orchestrator:
         context_package: Dict[str, Any],
         max_tokens: int,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Trim low-priority context to fit within max_tokens."""
+        """
+        Trim low-priority context to fit within max_tokens.
+        按相关性修剪上下文：优先保留距离当前章节更近的内容，
+        从最远的（列表末尾）开始删除。
+        """
         trimmed = dict(context_package or {})
         for key in ["full_facts", "summary_with_events", "summary_only", "title_only", "volume_summaries"]:
             trimmed[key] = list(trimmed.get(key, []) or [])
@@ -1964,12 +1262,15 @@ class Orchestrator:
                 trimmed[key] = []
             return trimmed, {"trimmed": True, "before": before, "after": self._estimate_context_tokens(trimmed)}
 
+        # Removal order: lowest priority categories first
         removal_order = ["title_only", "volume_summaries", "summary_only", "summary_with_events"]
         while self._estimate_context_tokens(trimmed) > max_tokens:
             removed_any = False
             for key in removal_order:
                 if trimmed[key]:
-                    trimmed[key].pop(0)
+                    # pop() removes from the end (farthest/least relevant),
+                    # preserving items closest to the current chapter
+                    trimmed[key].pop()
                     removed_any = True
                     if self._estimate_context_tokens(trimmed) <= max_tokens:
                         break
@@ -2052,46 +1353,3 @@ class Orchestrator:
             "research_stop_reason": payload.get("research_stop_reason"),
             "sufficiency_report": payload.get("sufficiency_report"),
         }
-
-    async def _persist_answer_memory(
-        self,
-        project_id: str,
-        chapter: str,
-        answers: List[Dict[str, Any]],
-    ) -> None:
-        """Persist pre-writing answers as memory evidence items."""
-        if not answers:
-            return
-        try:
-            from app.services.evidence_service import evidence_service
-            from app.services.working_memory_service import _answer_to_evidence_items
-        except Exception:
-            return
-
-        items = []
-        for raw in _answer_to_evidence_items(answers, chapter=chapter):
-            try:
-                items.append(
-                    EvidenceItem(
-                        id=raw.get("id") or "",
-                        type="memory",
-                        text=raw.get("text") or "",
-                        source={
-                            **(raw.get("source") or {}),
-                            "chapter": chapter,
-                        },
-                        scope="chapter",
-                        entities=[],
-                        meta=raw.get("meta") or {},
-                    )
-                )
-            except Exception:
-                continue
-
-        if items:
-            await evidence_service.append_memory_items(project_id, items)
-
-    async def extract_style_profile(self, project_id: str, sample_text: str) -> StyleCard:
-        """Extract writing style guidance from sample text."""
-        style_text = await self.archivist.extract_style_profile(sample_text)
-        return StyleCard(style=style_text)

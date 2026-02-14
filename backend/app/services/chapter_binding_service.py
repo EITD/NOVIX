@@ -1,5 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Chapter entity binding service.
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  章节实体绑定服务 - 为每个章节构建与卡片之间的实体关联，支持角色/世界观的命名和别名匹配。
+  Chapter entity binding service - builds and maintains per-chapter associations between draft text and entity cards (characters, world entities, rules).
 """
 
 from __future__ import annotations
@@ -23,7 +32,39 @@ from app.utils.chapter_id import ChapterIDValidator, normalize_chapter_id
 
 
 class ChapterBindingService:
-    """Build and read per-chapter entity bindings."""
+    """
+    章节实体绑定管理器 - 为章节构建并维护实体关联。
+
+    Manages per-chapter entity bindings (characters, world entities, world rules).
+    Uses BM25 scoring and heuristic matching to identify entity mentions in chapter text.
+
+    Attributes:
+        NAME_STOPWORDS: 通用代词/指代词 (Personal pronouns, generic references)
+        GENERIC_TERMS: 通用词汇 (Generic terms like city, kingdom that should be de-weighted)
+        BM25_THRESHOLD: BM25 匹配阈值 (Threshold for BM25-based matches)
+    """
+
+    NAME_STOPWORDS = {
+        "我",
+        "你",
+        "他",
+        "她",
+        "它",
+        "我们",
+        "你们",
+        "他们",
+        "她们",
+        "它们",
+        "这里",
+        "那里",
+        "此处",
+        "那边",
+        "自己",
+        "大家",
+        "众人",
+        "某人",
+        "某某",
+    }
 
     GENERIC_TERMS = {
         "城",
@@ -71,15 +112,22 @@ class ChapterBindingService:
         self.min_name_length = min_name_length
 
     async def build_bindings(self, project_id: str, chapter: str, force: bool = False) -> Dict[str, Any]:
-        """Build bindings for a chapter and persist to storage.
+        """
+        为章节构建实体绑定并持久化存储。
+
+        Build entity bindings for a chapter and persist to storage.
+        Identifies which characters, world entities, and rules are mentioned in the chapter text.
 
         Args:
-            project_id: Target project id.
-            chapter: Chapter id.
-            force: Force rebuild even if existing.
+            project_id: 目标项目 ID / Target project id.
+            chapter: 章节 ID / Chapter id.
+            force: 即使存在也强制重建 / Force rebuild even if existing.
 
         Returns:
-            Binding payload.
+            绑定数据结构 / Binding payload with characters, world_entities, world_rules, and sources.
+
+        Raises:
+            Exception: 数据存储操作异常 / If storage operations fail (caught and returns empty payload).
         """
         canonical = normalize_chapter_id(chapter) or str(chapter).strip()
         if not force:
@@ -430,7 +478,7 @@ class ChapterBindingService:
         candidates: List[Dict[str, Any]] = []
         for name in names:
             name = str(name or "").strip()
-            if not self._is_valid_name(name):
+            if not self._is_valid_name(name, min_length=1):
                 continue
             aliases = []
             aliases.extend(self._extract_aliases_from_name(name))
@@ -594,7 +642,8 @@ class ChapterBindingService:
     ) -> Dict[str, Any]:
         aliases = [candidate.get("name") or ""]
         aliases.extend(candidate.get("aliases") or [])
-        aliases = self._normalize_aliases(aliases, candidate.get("name") or "")
+        min_alias_len = 1 if candidate.get("type") == "character" else None
+        aliases = self._normalize_aliases(aliases, candidate.get("name") or "", min_length=min_alias_len)
         total_count = 0
         matched_aliases: List[str] = []
         examples: List[str] = []
@@ -759,14 +808,19 @@ class ChapterBindingService:
         cache[card_name] = self._normalize_aliases(aliases, card_name)
         return cache[card_name]
 
-    def _normalize_aliases(self, aliases: List[str], name: str) -> List[str]:
+    def _normalize_aliases(self, aliases: List[str], name: str, min_length: Optional[int] = None) -> List[str]:
+        try:
+            required_len = int(min_length) if min_length is not None else int(self.min_name_length)
+        except Exception:
+            required_len = 2
+
         seen = set()
         result = []
         for alias in aliases:
             alias = str(alias or "").strip()
             if not alias:
                 continue
-            if len(alias) < self.min_name_length:
+            if len(alias) < required_len:
                 continue
             if alias in seen:
                 continue
@@ -813,13 +867,38 @@ class ChapterBindingService:
             return 2
         return 3
 
-    def _is_valid_name(self, name: str) -> bool:
+    def _is_valid_name(self, name: str, min_length: Optional[int] = None) -> bool:
+        name = str(name or "").strip()
         if not name:
             return False
-        if len(name) < self.min_name_length:
+
+        try:
+            required_len = int(min_length) if min_length is not None else int(self.min_name_length)
+        except Exception:
+            required_len = 2
+
+        if len(name) < required_len:
             return False
+
+        if any(ch.isspace() for ch in name):
+            return False
+
+        if re.fullmatch(r"v\d+c\d+(?:[ei]\d+)?", name, flags=re.IGNORECASE):
+            return False
+
+        if name in self.NAME_STOPWORDS:
+            return False
+
         if name in self.GENERIC_TERMS:
             return False
+
+        # Avoid treating pure ASCII tokens as entity names (e.g. "json", "http", "id").
+        if re.fullmatch(r"[a-z0-9_\\-]+", name, flags=re.IGNORECASE):
+            return False
+
+        if len(name) > 40:
+            return False
+
         return True
 
     def _empty_payload(self, chapter: str) -> Dict[str, Any]:

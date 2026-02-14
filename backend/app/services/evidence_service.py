@@ -1,5 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Evidence indexing and retrieval.
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  证据索引服务 - 跨事实表、摘要和卡片构建和搜索证据索引，支持 BM25 排序和种子实体增强。
+  Evidence indexing and retrieval - Builds and searches evidence indices across facts, summaries, and cards with BM25 scoring and entity-based ranking.
 """
 
 from __future__ import annotations
@@ -24,7 +33,18 @@ from app.services.text_chunk_service import (
 
 
 class EvidenceIndexService:
-    """Build and search evidence indices across facts, summaries, and cards."""
+    """
+    证据索引管理服务 - 跨多个数据源构建和维护证据索引。
+
+    Manages evidence indices across facts, summaries, and character/world cards.
+    Provides BM25-based search with optional quotas and entity-based relevance ranking.
+
+    Attributes:
+        FACTS_INDEX: 事实索引标识 / Facts index name
+        SUMMARIES_INDEX: 摘要索引标识 / Summaries index name
+        CARDS_INDEX: 卡片索引标识 / Cards (character/world) index name
+        MEMORY_INDEX: 记忆索引标识 (append-only) / Memory index name (append-only)
+    """
 
     FACTS_INDEX = "facts"
     SUMMARIES_INDEX = "summaries"
@@ -264,6 +284,7 @@ class EvidenceIndexService:
         semantic_rerank: bool = False,
         rerank_query: Optional[str] = None,
         rerank_top_k: int = 16,
+        trace_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Search evidence items with type quotas.
@@ -279,6 +300,7 @@ class EvidenceIndexService:
             text_chunk_chapters: Optional chapter whitelist for text_chunk retrieval.
             text_chunk_exclude_chapters: Optional chapter blacklist for text_chunk retrieval.
             rebuild: Force rebuild indices.
+            trace_meta: Optional trace metadata (e.g., round/note).
 
         Returns:
             Evidence pack with selected items and stats.
@@ -326,12 +348,23 @@ class EvidenceIndexService:
             scored.extend(_wrap_text_chunks(text_chunk_hits))
 
         selected = _apply_type_quotas(scored, quotas, limit)
+        top_sources = _extract_top_sources(selected, limit=3)
+        trace_meta = trace_meta or {}
         return {
             "items": selected,
             "stats": {
                 "total": len(selected),
                 "types": _count_types(selected),
                 "queries": cleaned_queries,
+                "hits": len(selected),
+                "top_sources": top_sources,
+                "semantic_rerank": bool(semantic_rerank and rerank_query),
+                "rerank_query": rerank_query or "",
+                "rerank_top_k": int(rerank_top_k or 0),
+                "limit": int(limit or 0),
+                "types_requested": types or [],
+                "round": trace_meta.get("round"),
+                "note": trace_meta.get("note") or "",
             },
         }
 
@@ -983,6 +1016,29 @@ def _count_types(items: List[Dict[str, Any]]) -> Dict[str, int]:
     for item in items:
         counts[item["type"]] = counts.get(item["type"], 0) + 1
     return counts
+
+
+def _extract_top_sources(items: List[Dict[str, Any]], limit: int = 3) -> List[Dict[str, Any]]:
+    if not items or limit <= 0:
+        return []
+    seen = set()
+    result: List[Dict[str, Any]] = []
+    for item in items:
+        source = item.get("source") or {}
+        entry = {
+            "type": item.get("type"),
+            "chapter": source.get("chapter"),
+            "path": source.get("path"),
+            "field": source.get("field"),
+        }
+        key = (entry.get("type"), entry.get("chapter"), entry.get("path"), entry.get("field"))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(entry)
+        if len(result) >= limit:
+            break
+    return result
 
 
 evidence_service = EvidenceIndexService()

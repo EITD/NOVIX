@@ -9,16 +9,27 @@ from typing import List, Optional
 import re
 from app.schemas.canon import Fact, TimelineEvent, CharacterState
 from pydantic import BaseModel
-from app.storage import CanonStorage
+from app.dependencies import get_canon_storage
 
 router = APIRouter(prefix="/projects/{project_id}/canon", tags=["canon"])
-canon_storage = CanonStorage()
+canon_storage = get_canon_storage()
 
 class FactUpdate(BaseModel):
     """Payload for partial fact updates."""
     title: Optional[str] = None
     content: Optional[str] = None
     statement: Optional[str] = None
+    source: Optional[str] = None
+    introduced_in: Optional[str] = None
+    confidence: Optional[float] = None
+
+
+class ManualFactCreate(BaseModel):
+    """Manual fact creation payload (server assigns ID)."""
+
+    statement: Optional[str] = None
+    content: Optional[str] = None
+    title: Optional[str] = None
     source: Optional[str] = None
     introduced_in: Optional[str] = None
     confidence: Optional[float] = None
@@ -36,6 +47,54 @@ async def add_fact(project_id: str, fact: Fact):
     """Add a new fact / 添加新事实"""
     await canon_storage.add_fact(project_id, fact)
     return {"success": True, "message": "Fact added"}
+
+
+@router.post("/facts/manual")
+async def add_manual_fact(project_id: str, payload: ManualFactCreate):
+    """Add a new manual fact (auto ID) / 手动新增事实（自动分配ID）"""
+    statement = (payload.statement or payload.content or "").strip()
+    if not statement:
+        raise HTTPException(status_code=400, detail="Fact statement is required")
+
+    source = (payload.source or payload.introduced_in or "").strip()
+    introduced_in = (payload.introduced_in or source).strip()
+    if not introduced_in:
+        raise HTTPException(status_code=400, detail="introduced_in is required")
+    if not source:
+        source = introduced_in
+
+    confidence = payload.confidence if payload.confidence is not None else 1.0
+    if not (0.0 <= float(confidence) <= 1.0):
+        raise HTTPException(status_code=400, detail="confidence must be within [0, 1]")
+
+    all_facts = await canon_storage.get_all_facts_raw(project_id)
+    max_num = 0
+    for item in all_facts:
+        fid = str((item or {}).get("id", ""))
+        match = re.match(r"^F(\d+)$", fid, re.IGNORECASE)
+        if match:
+            max_num = max(max_num, int(match.group(1)))
+    fact_id = f"F{max_num + 1:04d}"
+
+    fact_data = {
+        "id": fact_id,
+        "statement": statement,
+        "source": source,
+        "introduced_in": introduced_in,
+        "confidence": float(confidence),
+    }
+    if payload.title is not None:
+        fact_data["title"] = payload.title
+    if payload.content is not None:
+        fact_data["content"] = payload.content
+
+    file_path = canon_storage.get_project_path(project_id) / "canon" / "facts.jsonl"
+    await canon_storage.append_jsonl(file_path, fact_data)
+
+    from app.storage.indexed_cache import get_index_cache
+    await get_index_cache().invalidate(project_id)
+
+    return {"success": True, "message": "Fact added", "id": fact_id}
 
 
 

@@ -1,4 +1,12 @@
-﻿import React, { useState } from 'react';
+﻿/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ */
+
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useIDE } from '../../context/IDEContext';
 import {
@@ -13,13 +21,27 @@ import {
 import { cn } from '../../components/ui/core';
 
 /**
- * ActivityBar - 左侧活动栏
- * 负责主要面板切换与版权信息弹窗入口。
+ * ActivityBar - 左侧活动栏导航
+ *
+ * IDE 左侧固定活动栏，提供多个面板的快速切换：资源管理器、事实全典、卡片管理等。
+ * 支持面板切换、版权声明显示等功能。
+ *
+ * @component
+ * @returns {JSX.Element} 活动栏和相关对话框
+ *
+ * 功能：
+ * - 五个主要面板快速导航
+ * - 版权声明和许可证信息弹窗
+ * - 流畅的动画过渡
  */
 export function ActivityBar() {
   const { state, dispatch } = useIDE();
-  const [showLicense, setShowLicense] = useState(false);
+  const [showLegalNotice, setShowLegalNotice] = useState(false);
+  const [showFullLicense, setShowFullLicense] = useState(false);
 
+  // ========================================================================
+  // 活动项配置 / Activity Items Configuration
+  // ========================================================================
   const icons = [
     { id: 'explorer', icon: Files, label: '资源管理器' },
     { id: 'facts', icon: Lightbulb, label: '事实全典' },
@@ -28,12 +50,15 @@ export function ActivityBar() {
     { id: 'agents', icon: Bot, label: '智能体' },
   ];
 
+  // 计算当前活跃按钮的位置（用于动画）
   const activeIndex = icons.findIndex((item) => item.id === state.activeActivity);
 
   return (
     <>
       <div className="w-12 flex flex-col items-center py-2 bg-[var(--vscode-sidebar-bg)] border-r border-[var(--vscode-sidebar-border)] z-30">
+        {/* 活动项按钮容器 */}
         <div className="flex-1 space-y-1 relative">
+          {/* 活跃指示背景 - Animated active indicator background */}
           {activeIndex !== -1 && state.sidePanelVisible && (
             <motion.div
               className="absolute left-1 w-10 h-10 bg-[var(--vscode-list-hover)] rounded-[6px]"
@@ -43,6 +68,7 @@ export function ActivityBar() {
             />
           )}
 
+          {/* 活动项列表 - Activity Items */}
           {icons.map((item) => (
             <ActivityItem
               key={item.id}
@@ -54,9 +80,15 @@ export function ActivityBar() {
           ))}
         </div>
 
+        {/* ========================================================================
+            版权声明按钮 / Legal Notice Button
+            ======================================================================== */}
         <button
-          onClick={() => setShowLicense(true)}
-          title="版权声明"
+          onClick={() => {
+            setShowFullLicense(false);
+            setShowLegalNotice(true);
+          }}
+          title="声明"
           className={cn(
             'w-10 h-10 flex items-center justify-center rounded-xl transition-all duration-200 group relative z-10',
             'text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]'
@@ -66,14 +98,17 @@ export function ActivityBar() {
         </button>
       </div>
 
+      {/* ========================================================================
+          版权声明对话框 / Legal Notice Dialog
+          ======================================================================== */}
       <AnimatePresence>
-        {showLicense && (
+        {showLegalNotice && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4 anti-theme"
-            onClick={() => setShowLicense(false)}
+            onClick={() => setShowLegalNotice(false)}
           >
             <motion.div
               initial={{ scale: 0.95, y: 20 }}
@@ -84,11 +119,11 @@ export function ActivityBar() {
             >
               <div className="flex items-center justify-between p-4 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
                 <div>
-                  <h2 className="text-xl font-bold text-[var(--vscode-fg)]">版权与许可</h2>
-                  <p className="text-xs text-[var(--vscode-fg-subtle)] mt-0.5">Copyright & License</p>
+                  <h2 className="text-xl font-bold text-[var(--vscode-fg)]">声明</h2>
+                  <p className="text-xs text-[var(--vscode-fg-subtle)] mt-0.5">请在使用前阅读</p>
                 </div>
                 <button
-                  onClick={() => setShowLicense(false)}
+                  onClick={() => setShowLegalNotice(false)}
                   className="p-2 hover:bg-[var(--vscode-list-hover)] rounded-[6px] transition-colors"
                 >
                   <X size={20} />
@@ -96,9 +131,48 @@ export function ActivityBar() {
               </div>
 
               <div className="p-6 overflow-y-auto max-h-[calc(80vh-80px)]">
-                <div className="prose prose-sm max-w-none">
-                  <pre className="whitespace-pre-wrap text-xs leading-relaxed font-mono bg-[var(--vscode-input-bg)] p-4 rounded-[6px] border border-[var(--vscode-sidebar-border)] text-[var(--vscode-fg)]">
-                    {`PolyForm Noncommercial License 1.0.0
+                <div className="space-y-4 text-sm text-[var(--vscode-fg)]">
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold text-[var(--vscode-fg-subtle)] uppercase tracking-wider">内容版权</div>
+                    <div className="text-sm leading-relaxed text-[var(--vscode-fg)]">
+                      用户对其自行创作、输入、编辑并生成的文本内容，原则上享有相应权利；但用户应自行确保内容不侵犯第三方权利（包括但不限于著作权、肖像权、名誉权、隐私权等）。
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold text-[var(--vscode-fg-subtle)] uppercase tracking-wider">合规与责任</div>
+                    <div className="text-sm leading-relaxed text-[var(--vscode-fg)]">
+                      用户在传播、发布或利用本软件生成/处理的内容时，应遵守所在国家或地区法律法规与平台规则。开发者不对用户的使用行为及其后果承担责任。
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold text-[var(--vscode-fg-subtle)] uppercase tracking-wider">使用倡议</div>
+                    <div className="text-sm leading-relaxed text-[var(--vscode-fg)]">
+                      请正确、审慎地使用本软件，尊重原创与他人劳动成果，自觉维护健康的文学创作环境。
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold text-[var(--vscode-fg-subtle)] uppercase tracking-wider">软件许可与商用限制</div>
+                    <div className="text-sm leading-relaxed text-[var(--vscode-fg)]">
+                      本软件源代码采用 <span className="font-mono text-[12px]">PolyForm Noncommercial License 1.0.0</span>（非商业许可）。未经作者书面授权，禁止将本软件用于任何商业目的或商业化分发。
+                    </div>
+                    <div className="text-xs text-[var(--vscode-fg-subtle)]">
+                      商业授权联系：<span className="font-mono">1467673018@qq.com</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-[var(--vscode-sidebar-border)]">
+                    <button
+                      onClick={() => setShowFullLicense((v) => !v)}
+                      className="text-xs px-3 py-2 rounded-[6px] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] transition-none text-[var(--vscode-fg)]"
+                    >
+                      {showFullLicense ? '收起许可全文' : '查看许可全文'}
+                    </button>
+                    {showFullLicense && (
+                      <pre className="mt-3 whitespace-pre-wrap text-xs leading-relaxed font-mono bg-[var(--vscode-input-bg)] p-4 rounded-[6px] border border-[var(--vscode-sidebar-border)] text-[var(--vscode-fg)]">
+{`PolyForm Noncommercial License 1.0.0
 
 https://polyformproject.org/licenses/noncommercial/1.0.0
 
@@ -142,14 +216,13 @@ AS FAR AS THE LAW ALLOWS, THIS SOFTWARE COMES AS IS, WITHOUT ANY WARRANTY OR CON
 ---
 COPYRIGHT NOTICE
 ---
-Copyright (c) 2026 丁逸飞 (Ding Yifei) <1467673018@qq.com>
+Copyright (c) 2026 Ding Yifei <1467673018@qq.com>
 
 All Rights Reserved.
-STRICTLY NO COMMERCIAL USE WITHOUT WRITTEN PERMISSION.
-禁止一切未经书面授权的商业使用。Commercial Licensing Contact / 商业授权联系:
-Email: 1467673018@qq.com
-GitHub: https://github.com/unitagain`}
-                  </pre>
+STRICTLY NO COMMERCIAL USE WITHOUT WRITTEN PERMISSION.`}
+                      </pre>
+                    )}
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -161,6 +234,16 @@ GitHub: https://github.com/unitagain`}
 }
 
 function ActivityItem({ icon: Icon, label, isActive, onClick }) {
+  /**
+   * ActivityItem - 单个活动栏按钮
+   *
+   * 活动栏中的单个可点击项，支持激活状态、悬停效果和指示器动画。
+   *
+   * @param {Function} icon - 图标组件（Lucide 图标）
+   * @param {string} label - 按钮工具提示文本
+   * @param {boolean} isActive - 是否为激活状态
+   * @param {Function} onClick - 点击处理函数
+   */
   return (
     <button
       onClick={onClick}

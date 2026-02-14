@@ -1,20 +1,57 @@
 /**
- * DiffReviewView - 差异审阅视图
- * 展示统一差异并支持逐块接受/拒绝。
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   差异审阅视图 - 展示统一格式的文本修改差异，支持逐块接受/拒绝
+ *   Diff review view for displaying unified diff format and per-hunk accept/reject.
+ */
+
+/**
+ * 差异审阅视图组件 - 展示编辑修改的统一差异视图
+ *
+ * Displays unified diff format with inline segments (context/add/delete) and supports
+ * per-hunk accept/reject decisions. Shows overall diff statistics.
+ *
+ * @component
+ * @example
+ * return (
+ *   <DiffReviewView
+ *     ops={diffOps}
+ *     hunks={diffHunks}
+ *     stats={{ additions: 10, deletions: 5 }}
+ *     onAcceptHunk={handleAccept}
+ *     onRejectHunk={handleReject}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {Array} [props.ops=[]] - buildLineDiff 返回的操作 / Line diff operations
+ * @param {Array} [props.hunks=[]] - 后端返回的 diff 块 / Backend diff chunks
+ * @param {Object} [props.stats={}] - 统计信息 / Statistics { additions, deletions }
+ * @param {Object} [props.decisions={}] - 块决策映射 / Hunk decision map { [hunkId]: 'accepted'|'rejected' }
+ * @param {Function} [props.onAcceptHunk] - 接受块回调 / Accept hunk callback
+ * @param {Function} [props.onRejectHunk] - 拒绝块回调 / Reject hunk callback
+ * @param {string} [props.originalVersion='v1'] - 原始版本标签 / Original version label
+ * @param {string} [props.revisedVersion='v2'] - 修订版本标签 / Revised version label
+ * @returns {JSX.Element} 差异审阅视图 / Diff review view element
  */
 
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '../ui/core';
-import { Check, X, Plus, Minus, FileText } from 'lucide-react';
+import { Plus, Minus, FileText } from 'lucide-react';
+
+const renderLine = (line) => (line === '' ? '\u00A0' : line);
 
 const DiffReviewView = ({
     ops = [],             // buildLineDiff 返回的 ops（含 context/add/delete；非 context 通常带 hunkId）
     hunks = [],           // 后端 diff 块
     stats = {},           // { additions: N, deletions: N }
     decisions = {},       // { [hunkId]: 'accepted' | 'rejected' }
-    onAcceptAll,          // 接受全部
-    onRejectAll,          // 拒绝全部
     onAcceptHunk,         // 接受单块
     onRejectHunk,         // 拒绝单块
     originalVersion = "v1",
@@ -55,26 +92,10 @@ const DiffReviewView = ({
                     </span>
                 </div>
 
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={onRejectAll}
-                        className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-medium text-red-600 hover:bg-red-50 rounded-[6px] border border-red-200 transition-colors"
-                    >
-                        <X size={12} />
-                        拒绝全部
-                    </button>
-                    <button
-                        onClick={onAcceptAll}
-                        className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-medium text-white bg-green-600 hover:bg-green-700 rounded-[6px] transition-colors"
-                    >
-                        <Check size={12} />
-                        接受全部
-                    </button>
-                </div>
             </div>
 
             {/* 内容区：在全文对应位置展示内联差异 */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+            <div className="flex-1 overflow-y-scroll editor-scrollbar p-6">
                 <div className="font-serif text-base leading-relaxed text-[var(--vscode-fg)] space-y-0.5">
                     {segments.map((segment, index) => {
                         if (segment.type === 'context') {
@@ -83,7 +104,7 @@ const DiffReviewView = ({
                                     key={`ctx-${index}`}
                                     className="leading-loose whitespace-pre-wrap break-words"
                                 >
-                                    {segment.content}
+                                    {renderLine(segment.content)}
                                 </div>
                             );
                         }
@@ -165,7 +186,7 @@ const InlineChangeBlock = ({ decision, onAccept, onReject, deletedLines = [], ad
                                 key={`del-${idx}`}
                                 className="text-sm text-red-700 line-through decoration-red-500 decoration-2 whitespace-pre-wrap break-words"
                             >
-                                {line}
+                                {renderLine(line)}
                             </div>
                         ))}
                     </div>
@@ -177,7 +198,7 @@ const InlineChangeBlock = ({ decision, onAccept, onReject, deletedLines = [], ad
                                 key={`add-${idx}`}
                                 className="text-sm text-green-800 whitespace-pre-wrap break-words"
                             >
-                                {line}
+                                {renderLine(line)}
                             </div>
                         ))}
                     </div>

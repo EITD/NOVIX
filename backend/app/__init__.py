@@ -1,5 +1,5 @@
 """
-NOVIX Backend Application
+WenShape Backend Application
 多智能体小说写作系统后端 / Multi-Agent Novel Writing System Backend
 """
 

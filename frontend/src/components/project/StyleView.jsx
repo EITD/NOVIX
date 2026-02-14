@@ -1,11 +1,36 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   文风设定视图 - 管理项目的写作风格指导与自动提取功能
+ *   Style view component for managing writing style guidelines and auto-extraction.
+ */
+
+import React, { useState, useEffect } from 'react';
 import { cardsAPI } from '../../api';
 import { Button, Card } from '../ui/core';
 import { RefreshCw, Feather, Sparkles, Save } from 'lucide-react';
+import logger from '../../utils/logger';
 
 /**
- * StyleView - 文风设定视图
- * 负责文风输入与提炼操作。
+ * 文风设定视图组件 - 管理项目的写作风格指导和自动提炼
+ *
+ * Component for managing and editing writing style guidelines for a project.
+ * Supports manual input and automatic extraction from sample text.
+ *
+ * @component
+ * @example
+ * return (
+ *   <StyleView projectId="proj-001" />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {string} [props.projectId] - 项目ID / Project identifier
+ * @returns {JSX.Element} 文风设定视图 / Style view element
  */
 export function StyleView({ projectId }) {
   const [loading, setLoading] = useState(false);
@@ -45,7 +70,7 @@ export function StyleView({ projectId }) {
         setFormData(response.data);
       }
     } catch (error) {
-      console.error('Failed to load style:', error);
+      logger.error('Failed to load style:', error);
     } finally {
       setLoading(false);
     }

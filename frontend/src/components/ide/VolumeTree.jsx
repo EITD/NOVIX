@@ -1,19 +1,50 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   分卷树视图 - IDE 资源管理器中的分卷和章节树，支持树形导航和重排
+ *   Volume tree view for IDE explorer showing volumes and chapters with reordering.
+ */
+
+/**
+ * 分卷树组件 - IDE 资源管理器中的分卷和章节树形结构
+ *
+ * IDE explorer tree component displaying project volumes and chapters in hierarchical view.
+ * Only handles list presentation and interaction triggering, preserving data structure
+ * and business logic. Implements "Calm & Focus" design language with:
+ * - High density: unified line height
+ * - Low noise: subtle decorations
+ * - Clear hierarchy: indentation and light indicators
+ *
+ * @component
+ * @example
+ * return (
+ *   <VolumeTree
+ *     projectId="proj-001"
+ *     onChapterSelect={handleSelect}
+ *     selectedChapter="ch001"
+ *     reorderMode={false}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {string} [props.projectId] - 项目ID / Project identifier
+ * @param {Function} [props.onChapterSelect] - 章节选择回调 / Chapter selection callback
+ * @param {string} [props.selectedChapter] - 当前选中章节 / Currently selected chapter
+ * @param {boolean} [props.reorderMode=false] - 是否处于重排模式 / Whether in reorder mode
+ * @returns {JSX.Element} 分卷树元素 / Volume tree element
+ */
 import { useEffect, useMemo, useState } from 'react';
 import useSWR, { mutate } from 'swr';
-import { ChevronRight, ChevronDown, Trash2, ArrowUp, ArrowDown } from 'lucide-react'; // 使用标准折叠箭头
+import { ChevronRight, ChevronDown, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { draftsAPI, volumesAPI } from '../../api';
 import { useIDE } from '../../context/IDEContext';
 import { cn } from '../ui/core';
 
-/**
- * VolumeTree - 资源管理器章节树
- * 仅负责列表呈现与交互触发，不改变数据结构与业务逻辑。
- *
- * 设计取向（仅视觉，不改结构）：
- * - 高密度：统一行高
- * - 低噪声：弱化装饰
- * - 层级清晰：缩进与轻指示线
- */
 export default function VolumeTree({ projectId, onChapterSelect, selectedChapter, reorderMode = false }) {
   const { state, dispatch } = useIDE();
 

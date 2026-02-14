@@ -1,19 +1,68 @@
-﻿"""
-Context select engine.
+# -*- coding: utf-8 -*-
+"""
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  上下文选择引擎 - 智能选择相关上下文项
+  Context Selection Engine - Intelligently selects relevant context items for LLM calls
+  Supports both deterministic selection (critical items) and retrieval-based selection
+  (ranked by relevance using embeddings or BM25).
 """
 
 from typing import List, Optional, Dict, Any
-import numpy as np
+import math
 from .models import ContextItem, ContextPriority, ContextType
+from .text_tokenizer import calculate_overlap_score, calculate_bm25_score
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ContextSelectEngine:
-    """Selects relevant context items."""
+    """
+    上下文选择引擎 - 为LLM调用选择最相关的上下文项
+
+    Selects relevant context items for writing agents based on query relevance.
+    Supports both deterministic selection (always include critical items like style cards)
+    and retrieval-based selection (rank by relevance using embeddings or keyword matching).
+
+    Attributes:
+        embeddings (Optional): 嵌入服务实例 / Optional embeddings service for semantic ranking.
+        MAX_CANDIDATES_PER_TYPE (int): 每种类型最大候选数量 / Max candidates per item type.
+    """
 
     def __init__(self, embeddings_service=None):
+        """
+        初始化上下文选择引擎 / Initialize the context selection engine.
+
+        Args:
+            embeddings_service: 可选的嵌入服务 / Optional embeddings service for semantic similarity.
+        """
         self.embeddings = embeddings_service
 
+    # ========================================================================
+    # 确定性选择：必须加载的关键项 / Deterministic Selection: Critical items
+    # ========================================================================
+
     async def deterministic_select(self, project_id: str, agent_name: str, storage: Any) -> List[ContextItem]:
+        """
+        确定性选择 - 加载特定智能体必须使用的项 / Deterministic selection for critical items.
+
+        Always loads critical items (like style cards) that should be included
+        regardless of query relevance. Maintains consistent voice and style.
+
+        Args:
+            project_id: 项目ID / Project identifier.
+            agent_name: 智能体名称 / Agent name (archivist, writer, editor).
+            storage: 统一存储适配器 / Unified storage adapter.
+
+        Returns:
+            关键上下文项列表 / List of critical ContextItems.
+        """
         items = []
         always_load_map = {
             "archivist": ["style_card"],
@@ -30,6 +79,17 @@ class ContextSelectEngine:
         return items
 
     async def _load_item(self, project_id: str, item_type: str, storage: Any) -> Optional[ContextItem]:
+        """
+        加载单个上下文项（如风格卡片） / Load a single context item (e.g., style card).
+
+        Args:
+            project_id: 项目ID / Project identifier.
+            item_type: 项目类型 / Item type (style_card, scene_brief, etc).
+            storage: 统一存储适配器 / Unified storage adapter.
+
+        Returns:
+            上下文项或None / ContextItem or None if not found.
+        """
         try:
             if item_type == "style_card":
                 card = await storage.get_style_card(project_id)
@@ -41,13 +101,37 @@ class ContextSelectEngine:
                         priority=ContextPriority.CRITICAL,
                     )
         except Exception as exc:
-            print(f"Error loading {item_type}: {exc}")
+            logger.warning("Error loading %s: %s", item_type, exc)
         return None
 
     def _format_card(self, card: Dict[str, Any]) -> str:
+        """
+        格式化卡片为可读字符串 / Format card dict as readable string.
+
+        Args:
+            card: 卡片数据 / Card data dict or object.
+
+        Returns:
+            格式化的字符串 / Formatted string representation.
+        """
+        if hasattr(card, "model_dump"):
+            try:
+                payload = card.model_dump(exclude_none=True)
+                if isinstance(payload, dict):
+                    return "\n".join(f"{k}: {v}" for k, v in payload.items() if v)
+            except Exception:
+                pass
         if isinstance(card, dict):
             return "\n".join(f"{k}: {v}" for k, v in card.items() if v)
         return str(card)
+
+    # ========================================================================
+    # 检索式选择：基于查询的相关性排序 / Retrieval Selection: Query-based ranking
+    # ========================================================================
+
+    # Maximum candidates to load per item type to prevent memory bloat
+    # 每种类型最大候选加载数量，防止内存膨胀
+    MAX_CANDIDATES_PER_TYPE = 50
 
     async def retrieval_select(
         self,
@@ -57,116 +141,169 @@ class ContextSelectEngine:
         storage: Any,
         top_k: int = 5,
     ) -> List[ContextItem]:
-        all_candidates: List[ContextItem] = []
-        for item_type in item_types:
-            if item_type == "text_chunk":
-                chunks = await self._search_text_chunks(project_id, query, storage, top_k)
-                all_candidates.extend(chunks)
-                continue
-            candidates = await self._get_candidates(project_id, item_type, storage)
-            all_candidates.extend(candidates)
+        """
+        检索式选择 - 基于查询相关性排序项目 / Retrieval-based selection ranked by query relevance.
 
-        if not all_candidates:
+        Loads candidates from each item type, computes relevance scores using embeddings
+        or keyword matching, and returns top-k most relevant items.
+
+        Args:
+            project_id: 项目ID / Project identifier.
+            query: 搜索查询文本 / Search query text.
+            item_types: 要搜索的项目类型列表 / Item types to search (character, world, fact, text_chunk).
+            storage: 统一存储适配器 / Unified storage adapter.
+            top_k: 返回的最大项目数 / Maximum items to return (default 5).
+
+        Returns:
+            按相关性排序的上下文项列表 / List of ContextItems sorted by relevance.
+        """
+        query = str(query or "").strip()
+        if not query:
             return []
 
-        if not self.embeddings:
-            self._assign_simple_scores(query, all_candidates)
-            all_candidates.sort(key=lambda x: x.relevance_score, reverse=True)
-            return all_candidates[:top_k]
+        top_k = max(int(top_k or 0), 0)
+        if top_k <= 0:
+            return []
 
-        query_embedding = await self.embeddings.encode(query)
-        for item in all_candidates:
-            item_embedding = await self.embeddings.encode(item.content)
-            item.relevance_score = self._cosine_similarity(query_embedding, item_embedding)
+        item_types = [str(t or "").strip().lower() for t in (item_types or []) if str(t or "").strip()]
+        if not item_types:
+            return []
 
-        all_candidates.sort(key=lambda x: x.relevance_score, reverse=True)
-        return all_candidates[:top_k]
-
-    async def _get_candidates(self, project_id: str, item_type: str, storage: Any) -> List[ContextItem]:
         candidates: List[ContextItem] = []
-        try:
-            if item_type == "character":
+
+        def score_text(text: str) -> float:
+            text = str(text or "").strip()
+            if not text:
+                return 0.0
+            try:
+                overlap = calculate_overlap_score(query, text)
+            except Exception:
+                overlap = 0.0
+            try:
+                bm25 = calculate_bm25_score(query, text)
+            except Exception:
+                bm25 = 0.0
+            # Hybrid lexical score: overlap provides robustness for short queries,
+            # bm25 stabilizes for longer contexts.
+            return float(overlap) * 0.35 + float(bm25) * 0.65
+
+        # Character cards / 角色卡
+        if "character" in item_types:
+            try:
                 names = await storage.list_character_cards(project_id)
-                for name in names:
+            except Exception as exc:
+                logger.warning("Failed to list character cards: %s", exc)
+                names = []
+            for name in (names or [])[: self.MAX_CANDIDATES_PER_TYPE]:
+                try:
                     card = await storage.get_character_card(project_id, name)
-                    if card:
-                        candidates.append(
-                            ContextItem(
-                                id=f"char_{name}",
-                                type=ContextType.CHARACTER_CARD,
-                                content=self._format_card(card),
-                                priority=ContextPriority.MEDIUM,
-                            )
-                        )
-            elif item_type == "world":
-                names = await storage.list_world_cards(project_id)
-                for name in names:
-                    card = await storage.get_world_card(project_id, name)
-                    if card:
-                        candidates.append(
-                            ContextItem(
-                                id=f"world_{name}",
-                                type=ContextType.WORLD_CARD,
-                                content=self._format_card(card),
-                                priority=ContextPriority.MEDIUM,
-                            )
-                        )
-            elif item_type == "fact":
-                facts = await storage.get_all_facts(project_id)
-                for i, fact in enumerate(facts):
-                    candidates.append(
-                        ContextItem(
-                            id=f"fact_{i}",
-                            type=ContextType.FACT,
-                            content=str(fact),
-                            priority=ContextPriority.LOW,
-                        )
+                except Exception:
+                    card = None
+                if not card:
+                    continue
+                content = self._format_card(card)
+                s = score_text(content)
+                if s <= 0:
+                    continue
+                candidates.append(
+                    ContextItem(
+                        id=f"char_{name}",
+                        type=ContextType.CHARACTER_CARD,
+                        content=content,
+                        priority=ContextPriority.MEDIUM,
+                        relevance_score=s,
+                        metadata={"name": name},
                     )
-        except Exception as exc:
-            print(f"Error getting candidates for {item_type}: {exc}")
-
-        return candidates
-
-    def _assign_simple_scores(self, query: str, candidates: List[ContextItem]) -> None:
-        query_lower = query.lower()
-        query_words = query_lower.split()
-        for item in candidates:
-            if item.relevance_score and item.relevance_score > 0:
-                continue
-            content_lower = item.content.lower()
-            overlap = sum(1 for word in query_words if word and word in content_lower)
-            item.relevance_score = overlap / max(len(query_words), 1)
-
-    async def _search_text_chunks(
-        self,
-        project_id: str,
-        query: str,
-        storage: Any,
-        top_k: int,
-    ) -> List[ContextItem]:
-        if not hasattr(storage, "search_text_chunks"):
-            return []
-        results = await storage.search_text_chunks(project_id, query, limit=top_k)
-        items: List[ContextItem] = []
-        for result in results:
-            content = result.get("text") or ""
-            source = result.get("source") or {}
-            items.append(
-                ContextItem(
-                    id=result.get("id") or "text_chunk",
-                    type=ContextType.TEXT_CHUNK,
-                    content=content,
-                    priority=ContextPriority.LOW,
-                    relevance_score=float(result.get("score") or 0),
-                    metadata={"source": source, "chapter": source.get("chapter")},
                 )
-            )
-        return items
 
-    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
-        dot_product = np.dot(vec1, vec2)
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-        return float(dot_product / (norm1 * norm2))
+        # World cards / 世界观卡
+        if "world" in item_types:
+            try:
+                names = await storage.list_world_cards(project_id)
+            except Exception as exc:
+                logger.warning("Failed to list world cards: %s", exc)
+                names = []
+            for name in (names or [])[: self.MAX_CANDIDATES_PER_TYPE]:
+                try:
+                    card = await storage.get_world_card(project_id, name)
+                except Exception:
+                    card = None
+                if not card:
+                    continue
+                content = self._format_card(card)
+                s = score_text(content)
+                if s <= 0:
+                    continue
+                candidates.append(
+                    ContextItem(
+                        id=f"world_{name}",
+                        type=ContextType.WORLD_CARD,
+                        content=content,
+                        priority=ContextPriority.MEDIUM,
+                        relevance_score=s,
+                        metadata={"name": name},
+                    )
+                )
+
+        # Canon facts / 事实
+        if "fact" in item_types:
+            try:
+                facts = await storage.get_all_facts(project_id)
+            except Exception as exc:
+                logger.warning("Failed to load facts: %s", exc)
+                facts = []
+            for idx, fact in enumerate((facts or [])[: self.MAX_CANDIDATES_PER_TYPE]):
+                try:
+                    statement = str(getattr(fact, "statement", "") or "").strip()
+                    fact_id = str(getattr(fact, "id", "") or "").strip() or f"F{idx + 1:04d}"
+                    introduced_in = str(getattr(fact, "introduced_in", "") or "").strip()
+                except Exception:
+                    continue
+                if not statement:
+                    continue
+                s = score_text(statement)
+                if s <= 0:
+                    continue
+                candidates.append(
+                    ContextItem(
+                        id=fact_id,
+                        type=ContextType.FACT,
+                        content=statement,
+                        priority=ContextPriority.MEDIUM,
+                        relevance_score=s,
+                        metadata={"introduced_in": introduced_in},
+                    )
+                )
+
+        # Text chunks / 正文片段
+        if "text_chunk" in item_types:
+            try:
+                chunks = await storage.search_text_chunks(project_id, query, limit=self.MAX_CANDIDATES_PER_TYPE)
+            except Exception as exc:
+                logger.warning("Failed to search text chunks: %s", exc)
+                chunks = []
+            for idx, chunk in enumerate(chunks or []):
+                if not isinstance(chunk, dict):
+                    continue
+                text = str(chunk.get("text") or "").strip()
+                if not text:
+                    continue
+                s = score_text(text)
+                if s <= 0:
+                    continue
+                candidates.append(
+                    ContextItem(
+                        id=f"text_{idx}",
+                        type=ContextType.TEXT_CHUNK,
+                        content=text,
+                        priority=ContextPriority.LOW,
+                        relevance_score=s,
+                        metadata={"source": chunk.get("source") or {}, "chapter": chunk.get("chapter")},
+                    )
+                )
+
+        if not candidates:
+            return []
+
+        candidates.sort(key=lambda item: float(item.relevance_score or 0.0), reverse=True)
+        return candidates[:top_k]

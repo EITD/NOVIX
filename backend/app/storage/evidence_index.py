@@ -1,5 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Evidence index storage.
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  证据索引存储 - 基于文件的证据索引存储层，支持证据项和元数据的持久化。
+  Evidence index storage - File-based storage for evidence indices with metadata tracking.
 """
 
 from typing import Any, Dict, List, Optional
@@ -9,7 +18,12 @@ from app.storage.base import BaseStorage
 
 
 class EvidenceIndexStorage(BaseStorage):
-    """File-based storage for evidence indices."""
+    """
+    证据索引存储层 - 基于文件的存储实现。
+
+    File-based storage for evidence indices (facts, summaries, cards, memory).
+    Stores items as JSONL and metadata as JSON for efficient append operations.
+    """
 
     def get_index_dir(self, project_id: str):
         """Return the index directory for a project."""
@@ -51,7 +65,12 @@ class EvidenceIndexStorage(BaseStorage):
         path = self.get_meta_path(project_id, index_name)
         if not path.exists():
             return None
-        data = await self.read_json(path)
+        try:
+            data = await self.read_json(path)
+        except Exception:
+            return None
+        if not data:
+            return None
         return EvidenceIndexMeta(**data)
 
     async def read_json(self, file_path):
@@ -67,7 +86,5 @@ class EvidenceIndexStorage(BaseStorage):
     async def write_json(self, file_path, data: Dict[str, Any]) -> None:
         """Write a JSON file."""
         import json
-        import aiofiles
-        self.ensure_dir(file_path.parent)
-        async with aiofiles.open(file_path, "w", encoding=self.encoding) as f:
-            await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+        payload = json.dumps(data, ensure_ascii=False, indent=2)
+        await self._atomic_write(file_path, payload)

@@ -1,5 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Text chunk indexing and search.
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  文本分块索引服务 - 对章节草稿进行分块处理，构建 BM25 索引，支持语义重排。
+  Text chunk indexing and search - Splits chapter drafts into chunks, builds BM25 indices, supports semantic reranking via LLM.
 """
 
 from __future__ import annotations
@@ -13,13 +22,26 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.schemas.evidence import EvidenceItem, EvidenceIndexMeta
 from app.storage.drafts import DraftStorage
 from app.storage.evidence_index import EvidenceIndexStorage
+from app.utils.text import normalize_newlines
 from app.llm_gateway import get_gateway
 from app.prompts import text_chunk_rerank_prompt
 from app.services.llm_config_service import llm_config_service
 
 
 class TextChunkIndexService:
-    """Index and search text chunks from chapter drafts."""
+    """
+    文本分块索引服务 - 对章节文本构建并维护 BM25 索引。
+
+    Indexes and searches text chunks from chapter drafts.
+    Supports sliding-window chunking with configurable overlap, BM25 scoring, and optional LLM-based semantic reranking.
+
+    Attributes:
+        INDEX_NAME: 索引标识 / Index name constant
+        max_paragraph_chars: 段落最大字符数 / Max characters per paragraph before windowing
+        window_size: 滑动窗口大小 / Sliding window size (characters)
+        window_overlap: 窗口重叠大小 / Window overlap (characters)
+        min_chunk_chars: 分块最小字符数 / Minimum chunk size to index
+    """
 
     INDEX_NAME = "text_chunks"
 
@@ -324,7 +346,7 @@ class TextChunkIndexService:
         return self._split_text(text)
 
     def _split_text(self, text: str) -> List[Dict[str, Any]]:
-        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        normalized = normalize_newlines(text)
         paragraphs = [p.strip() for p in re.split(r"\n{2,}", normalized) if p.strip()]
         chunks: List[Dict[str, Any]] = []
         for idx, paragraph in enumerate(paragraphs):

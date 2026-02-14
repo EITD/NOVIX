@@ -1,11 +1,33 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   系统设置页面 - 占位符页面，预留未来功能扩展入口
+ */
+
 import React from 'react';
 import { motion } from 'framer-motion';
 import { Settings } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 
 /**
- * System - 系统设置页
- * 当前仅展示占位说明，不改变任何业务逻辑。
+ * 系统设置页 / System Settings Page
+ *
+ * 当前为占位符实现，用于展示系统配置相关的提示信息。
+ * 不改变任何业务逻辑，仅作为 UI 框架预留。
+ *
+ * 未来可扩展功能：
+ * - 主题切换
+ * - 快捷键配置
+ * - 性能优化选项
+ * - 数据导出/导入
+ *
+ * @component
+ * @returns {JSX.Element} 系统设置页面容器
  */
 function System() {
   return (

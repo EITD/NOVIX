@@ -1,12 +1,47 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   LLM 配置对话框 - 创建和编辑 LLM 提供商配置文件（API密钥、模型选择等）
+ *   LLM profile modal for creating and editing provider configurations.
+ */
+
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Save, X, RefreshCw, Trash2 } from 'lucide-react';
 import { Button, Input } from './ui/core';
 import { configAPI } from '../api';
+import logger from '../utils/logger';
 
 /**
- * LLMProfileModal - 模型配置弹窗
- * 负责模型配置卡片的创建与编辑，不改变数据结构与交互语义。
+ * LLM 配置对话框 - 创建和编辑 LLM 提供商配置
+ *
+ * Modal for creating and editing LLM provider profiles (API keys, model selection, parameters).
+ * Preserves data structure and interaction semantics without modification.
+ *
+ * @component
+ * @example
+ * return (
+ *   <LLMProfileModal
+ *     open={true}
+ *     profile={existingProfile}
+ *     onClose={handleClose}
+ *     onSave={handleSave}
+ *     onDelete={handleDelete}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {boolean} [props.open=false] - 对话框是否打开 / Whether dialog is open
+ * @param {Object} [props.profile=null] - 现有配置文件 / Existing profile to edit
+ * @param {Function} [props.onClose] - 关闭回调 / Close callback
+ * @param {Function} [props.onSave] - 保存回调 / Save callback
+ * @param {Function} [props.onDelete] - 删除回调 / Delete callback
+ * @returns {JSX.Element} LLM 配置对话框 / LLM profile modal element
  */
 export default function LLMProfileModal({ open, profile, onClose, onSave, onDelete }) {
     const [fetchedModels, setFetchedModels] = useState([]);
@@ -136,7 +171,7 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                 }
             }
         } catch (error) {
-            console.error("Failed to fetch models", error);
+            logger.error("Failed to fetch models", error);
             setFetchWarning('');
             const errorMsg = error.response?.data?.detail || error.message;
             alert(`获取模型列表失败: ${errorMsg}\n\n提示: 请检查您选择的模型提供商是否与输入的密钥一致。`);

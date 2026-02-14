@@ -1,7 +1,15 @@
+# -*- coding: utf-8 -*-
 """
-Projects Router / 项目路由
-Project management endpoints
-项目管理端点
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  项目路由 - 项目管理端点
+  Projects Router - Project management endpoints including list, create,
+  delete and project statistics operations.
 """
 
 from fastapi import APIRouter, HTTPException
@@ -9,24 +17,29 @@ from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, List
 from app.schemas.project import Project, ProjectCreate, ProjectStats
-from app.storage import CardStorage, CanonStorage, DraftStorage
+from app.dependencies import get_card_storage, get_canon_storage, get_draft_storage
+from app.utils.path_safety import sanitize_id, validate_path_within
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
-# Storage instances / 存储实例
-card_storage = CardStorage()
-canon_storage = CanonStorage()
-draft_storage = DraftStorage()
+# ========================================================================
+# 存储实例 / Storage instances
+# ========================================================================
+
+card_storage = get_card_storage()
+canon_storage = get_canon_storage()
+draft_storage = get_draft_storage()
 
 
 @router.get("")
 async def list_projects():
     """
-    List all projects
-    列出所有项目
-    
+    列出所有项目 / List all projects
+
+    Retrieves a list of all projects with metadata.
+
     Returns:
-        List of projects / 项目列表
+        项目列表 / List of projects with id, name, description, timestamps.
     """
     data_dir = Path(card_storage.data_dir)
     
@@ -53,20 +66,26 @@ async def list_projects():
 @router.post("")
 async def create_project(project: ProjectCreate):
     """
-    Create a new project
-    创建新项目
-    
+    创建新项目 / Create a new project
+
+    Initializes a new project with directory structure and metadata.
+
     Args:
-        project: Project creation data / 项目创建数据
-        
+        project: 项目创建数据 / Project creation data.
+
     Returns:
-        Created project / 创建的项目
+        创建的项目 / Created project with generated ID and metadata.
     """
     # Generate project ID from name / 从名称生成项目ID
-    project_id = project.name.lower().replace(" ", "_")
-    
-    project_dir = Path(card_storage.data_dir) / project_id
-    
+    try:
+        project_id = sanitize_id(project.name.lower())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid project name: {e}")
+
+    data_dir = Path(card_storage.data_dir)
+    project_dir = data_dir / project_id
+    validate_path_within(project_dir, data_dir)
+
     if project_dir.exists():
         raise HTTPException(status_code=400, detail="Project already exists")
     
@@ -111,8 +130,14 @@ async def get_project(project_id: str):
     Returns:
         Project details / 项目详情
     """
-    project_file = Path(card_storage.data_dir) / project_id / "project.yaml"
-    
+    data_dir = Path(card_storage.data_dir)
+    project_dir = data_dir / project_id
+    try:
+        validate_path_within(project_dir, data_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    project_file = project_dir / "project.yaml"
+
     if not project_file.exists():
         raise HTTPException(status_code=404, detail="Project not found")
     
@@ -170,115 +195,6 @@ async def get_project_stats(project_id: str):
     }
 
 
-@router.get("/{project_id}/dashboard")
-async def get_project_dashboard(project_id: str) -> Dict[str, Any]:
-    """Get project dashboard data / 获取项目仪表盘数据
-
-    This endpoint is designed for MVP-2 Week7 frontend dashboard.
-    It aggregates per-chapter status and canon summary to avoid many API calls.
-
-    该端点面向 MVP-2 第7周前端仪表盘。
-    用于聚合章节状态与事实表概览，避免前端多次请求。
-    """
-
-    project_path = draft_storage.get_project_path(project_id)
-    if not project_path.exists():
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    # Base stats / 基础统计
-    character_names = await card_storage.list_character_cards(project_id)
-    facts = await canon_storage.get_all_facts(project_id)
-    timeline_events = await canon_storage.get_all_timeline_events(project_id)
-    character_states = await canon_storage.get_all_character_states(project_id)
-    chapters = await draft_storage.list_chapters(project_id)
-
-    total_word_count = 0
-    completed_chapters = 0
-    chapter_items: List[Dict[str, Any]] = []
-
-    for chapter in sorted(chapters):
-        draft_dir = project_path / "drafts" / chapter
-        final_path = draft_dir / "final.md"
-        conflicts_path = draft_dir / "conflicts.yaml"
-        summary_path = project_path / "summaries" / f"{chapter}_summary.yaml"
-
-        has_final = final_path.exists()
-        final_word_count = 0
-        if has_final:
-            try:
-                content = await draft_storage.read_text(final_path)
-                final_word_count = len(content)
-            except Exception:
-                final_word_count = 0
-
-            total_word_count += final_word_count
-            completed_chapters += 1
-
-        has_summary = summary_path.exists()
-        summary_brief = ""
-        summary_title = ""
-        summary_word_count = 0
-        if has_summary:
-            try:
-                summary = await draft_storage.get_chapter_summary(project_id, chapter)
-                if summary:
-                    summary_title = summary.title
-                    summary_word_count = summary.word_count
-                    summary_brief = summary.brief_summary
-            except Exception:
-                pass
-
-        has_conflicts = conflicts_path.exists()
-        conflict_count = 0
-        conflict_preview: List[str] = []
-        if has_conflicts:
-            try:
-                report = await draft_storage.read_yaml(conflicts_path)
-                conflicts = report.get("conflicts", []) if isinstance(report, dict) else []
-                if isinstance(conflicts, list):
-                    conflict_count = len(conflicts)
-                    conflict_preview = [str(x) for x in conflicts[:5]]
-            except Exception:
-                conflict_count = 0
-
-        chapter_items.append(
-            {
-                "chapter": chapter,
-                "has_final": has_final,
-                "final_word_count": final_word_count,
-                "has_summary": has_summary,
-                "summary_title": summary_title,
-                "summary_word_count": summary_word_count,
-                "summary_brief": summary_brief,
-                "has_conflicts": has_conflicts,
-                "conflict_count": conflict_count,
-                "conflict_preview": conflict_preview,
-            }
-        )
-
-    stats = {
-        "total_word_count": total_word_count,
-        "completed_chapters": completed_chapters,
-        "in_progress_chapters": len(chapters) - completed_chapters,
-        "character_count": len(character_names),
-        "fact_count": len(facts),
-        "timeline_event_count": len(timeline_events),
-        "character_state_count": len(character_states),
-    }
-
-    recent = {
-        "facts": [f.model_dump() for f in facts[-5:]],
-        "timeline_events": [e.model_dump() for e in timeline_events[-5:]],
-    }
-
-    return {
-        "project_id": project_id,
-        "stats": stats,
-        "chapters": chapter_items,
-        "recent": recent,
-    }
-
-
 @router.delete("/{project_id}")
 async def delete_project(project_id: str):
     """
@@ -292,12 +208,17 @@ async def delete_project(project_id: str):
         Deletion result / 删除结果
     """
     import shutil
-    
-    project_dir = Path(card_storage.data_dir) / project_id
-    
+
+    data_dir = Path(card_storage.data_dir)
+    project_dir = data_dir / project_id
+    try:
+        validate_path_within(project_dir, data_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail="Project not found")
-    
+
     shutil.rmtree(project_dir)
     
     return {"success": True, "message": "Project deleted"}

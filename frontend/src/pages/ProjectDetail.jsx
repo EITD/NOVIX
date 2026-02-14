@@ -1,4 +1,12 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ */
+
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import useSWR from 'swr';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -20,24 +28,37 @@ import {
   Library
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import logger from '../utils/logger';
 
 const fetcher = (fn) => fn().then((res) => res.data);
 
 /**
- * ProjectDetail - 项目详情页
- * 负责切换各功能视图，不改变数据结构与交互语义。
+ * ProjectDetail - 项目详情主页
+ *
+ * 项目管理中心，支持多个功能标签页的切换：同人导入、角色卡片、世界观、
+ * 文风设定等。使用 React Context 和 SWR 管理数据和状态。
+ *
+ * @component
+ * @returns {JSX.Element} 项目详情页布局
+ *
+ * 功能特性：
+ * - 左侧导航栏：项目名称和功能标签
+ * - 中央内容区：各功能模块的切换和展示
+ * - 流畅的页面过渡动画
  */
 function ProjectDetail() {
   const { projectId } = useParams();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('fanfiction');
 
+  // 获取项目信息
   const { data: project } = useSWR(
     projectId ? `project-${projectId}` : null,
     () => fetcher(() => projectsAPI.get(projectId)),
     { revalidateOnFocus: false }
   );
 
+  // 标签页标签和图标配置
   const tabLabels = {
     writing: '写作会话',
     fanfiction: '同人创作',
@@ -47,27 +68,32 @@ function ProjectDetail() {
     drafts: '档案库'
   };
 
+  // 角色管理状态
   const [characters, setCharacters] = useState([]);
   const [editingCharacter, setEditingCharacter] = useState(null);
 
+  // 加载角色列表
   useEffect(() => {
     if (activeTab === 'characters') loadCharacters();
   }, [projectId, activeTab]);
 
+  /**
+   * 从 API 加载角色列表
+   */
   const loadCharacters = async () => {
     try {
-      const names = await cardsAPI.listCharacters(projectId);
-      const chars = [];
-      for (const name of names.data) {
-        const char = await cardsAPI.getCharacter(projectId, name);
-        chars.push(char.data);
-      }
-      setCharacters(chars);
+      const response = await cardsAPI.listCharactersIndex(projectId);
+      const loaded = Array.isArray(response.data) ? response.data : [];
+      setCharacters(loaded);
     } catch (error) {
-      console.error('Failed to load characters:', error);
+      logger.error('Failed to load characters:', error);
     }
   };
 
+  /**
+   * 保存或更新角色卡片
+   * @param {CharacterCard} character - 角色卡片数据
+   */
   const saveCharacter = async (character) => {
     try {
       if (editingCharacter?.name && editingCharacter.name !== '') {
@@ -84,11 +110,15 @@ function ProjectDetail() {
 
   return (
     <div className="anti-theme flex h-screen bg-[var(--vscode-bg)] text-[var(--vscode-fg)] overflow-hidden">
+      {/* ========================================================================
+          左侧导航栏 / Left Navigation Sidebar
+          ======================================================================== */}
       <motion.div
         initial={{ x: -20, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
         className="w-64 border-r border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)] flex flex-col"
       >
+        {/* 项目头部 - Project Header */}
         <div className="p-4 border-b border-[var(--vscode-sidebar-border)]">
           <Button
             variant="ghost"
@@ -110,6 +140,7 @@ function ProjectDetail() {
           </motion.div>
         </div>
 
+        {/* 导航菜单 - Navigation Menu */}
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
           <NavButton
             active={activeTab === 'writing'}
@@ -151,6 +182,9 @@ function ProjectDetail() {
         </nav>
       </motion.div>
 
+      {/* ========================================================================
+          中央内容区 / Main Content Area
+          ======================================================================== */}
       <div className="flex-1 overflow-hidden">
         <AnimatePresence mode="wait">
           <motion.div
@@ -189,6 +223,17 @@ function ProjectDetail() {
 }
 
 function NavButton({ active, onClick, icon, label, highlight }) {
+  /**
+   * 导航按钮组件
+   *
+   * 项目详情页左侧导航栏的单个导航项，支持激活状态、悬停效果和高亮提示。
+   *
+   * @param {boolean} active - 是否为激活状态
+   * @param {Function} onClick - 点击处理函数
+   * @param {JSX.Element} icon - 图标元素
+   * @param {string} label - 按钮标签文本
+   * @param {boolean} [highlight] - 是否显示高亮指示器
+   */
   return (
     <button
       onClick={onClick}

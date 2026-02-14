@@ -1,15 +1,43 @@
-﻿import React, { useState } from 'react';
+﻿/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   分卷管理组件 - 展示项目分卷列表，支持创建/编辑/删除操作
+ *   Volume manager component for listing and managing project volumes (parts/books).
+ */
+
+import React, { useState } from 'react';
 import useSWR from 'swr';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { volumesAPI } from '../../api';
 import { cn } from '../ui/core';
+import logger from '../../utils/logger';
 
 /**
- * VolumeManager - 分卷管理组件
+ * 分卷管理组件 - 小说分卷（部分、章节集合）的创建和编辑
  *
- * 职责：
- * - 展示分卷列表
- * - 创建 / 编辑 / 删除分卷（V1 不可删除）
+ * Component for managing volumes (parts or books) within a project.
+ * Supports creating, editing, and deleting volumes (V1 is not deletable).
+ *
+ * @component
+ * @example
+ * return (
+ *   <VolumeManager
+ *     projectId="proj-001"
+ *     onVolumeSelect={handleSelect}
+ *     onRefresh={handleRefresh}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {string} [props.projectId] - 项目ID / Project identifier
+ * @param {Function} [props.onVolumeSelect] - 选择分卷回调 / Callback on volume selection
+ * @param {Function} [props.onRefresh] - 刷新回调 / Callback on refresh
+ * @returns {JSX.Element} 分卷管理组件 / Volume manager element
  */
 const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
   const [isCreating, setIsCreating] = useState(false);
@@ -35,7 +63,7 @@ const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
       setIsCreating(false);
       onRefresh?.();
     } catch (error) {
-      console.error('Failed to create volume:', error);
+      logger.error('Failed to create volume:', error);
       alert('创建分卷失败');
     }
   };
@@ -56,7 +84,7 @@ const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
       setEditingVolume(null);
       onRefresh?.();
     } catch (error) {
-      console.error('Failed to update volume:', error);
+      logger.error('Failed to update volume:', error);
       alert('更新分卷失败');
     }
   };
@@ -75,7 +103,7 @@ const VolumeManager = ({ projectId, onVolumeSelect, onRefresh }) => {
       mutate(volumes.filter((volume) => volume.id !== volumeId));
       onRefresh?.();
     } catch (error) {
-      console.error('Failed to delete volume:', error);
+      logger.error('Failed to delete volume:', error);
       alert('删除分卷失败');
     }
   };

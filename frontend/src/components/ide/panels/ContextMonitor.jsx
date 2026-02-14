@@ -1,6 +1,13 @@
 /**
- * ContextMonitor - 上下文监控组件
- * 展示多模型 Token 消耗与上下文健康状态。
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   上下文监控面板 - 展示多模型 Token 消耗、上下文预算分配和健康状态指标
+ *   Context monitor panel displaying token consumption, budget allocation, and health metrics.
  */
 
 import React, { useState, useMemo } from 'react';
@@ -8,7 +15,32 @@ import { motion } from 'framer-motion';
 import { cn } from '../../ui/core';
 import { AlertTriangle, CheckCircle2, AlertOctagon, Activity, BarChart2, PieChart } from 'lucide-react';
 
-// --- 本地化映射 ---
+/**
+ * 上下文监控面板 - 实时展示 LLM Token 使用情况和上下文健康状态
+ *
+ * IDE panel for monitoring context budget allocation, token consumption across agents,
+ * and system health status. Shows visual indicators for warning levels and available budget.
+ *
+ * @component
+ * @example
+ * return (
+ *   <ContextMonitor
+ *     data={{
+ *       agents: [
+ *         { agent: 'archivist', inputTokens: 1000, outputTokens: 500, maxTokens: 5000 }
+ *       ],
+ *       totalBudget: 128000,
+ *       usedTokens: 6500
+ *     }}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {Object} [props.data] - 上下文监控数据 / Context monitor data
+ * @returns {JSX.Element} 上下文监控面板 / Context monitor panel element
+ */
+
+// --- 本地化映射 / Localization mappings ---
 
 const AGENT_NAMES = {
     archivist: '档案员',
@@ -29,8 +61,15 @@ const TYPE_COLORS = {
     other: 'bg-gray-400'
 };
 
-// --- 子组件 ---
+// --- 子组件 / Subcomponents ---
 
+/**
+ * Agent Token 消耗条形图 / Agent cost bar component
+ * @param {string} agentId - 智能体ID / Agent identifier
+ * @param {number} inputTokens - 输入tokens / Input tokens
+ * @param {number} outputTokens - 输出tokens / Output tokens
+ * @param {number} maxTokens - 最大预算 / Maximum budget
+ */
 const AgentCostBar = ({ agentId, inputTokens, outputTokens, maxTokens }) => {
     const total = inputTokens + outputTokens;
     const inputPercent = (inputTokens / maxTokens) * 100;

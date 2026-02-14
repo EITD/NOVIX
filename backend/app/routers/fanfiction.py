@@ -1,33 +1,56 @@
+# -*- coding: utf-8 -*-
 """
-Fanfiction Router
-API endpoints for the fanfiction feature
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  同人创作路由 - 提供 Wiki 搜索、爬取和卡片生成 API，支持批量同人导入和构建。
+  Fanfiction router - Provides Wiki search, crawling, and character card generation APIs for fanfiction import with batch processing support.
 """
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 from app.services.search_service import search_service
 from app.services.crawler_service import crawler_service
 from app.agents.archivist import ArchivistAgent
 from app.llm_gateway.gateway import get_gateway
-from app.storage import CanonStorage, DraftStorage
-from app.storage.cards import cards_storage
+from app.dependencies import get_card_storage, get_canon_storage, get_draft_storage
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/fanfiction", tags=["fanfiction"])
 
-# Use imported storage instance
-card_storage = cards_storage
-canon_storage = CanonStorage()
-draft_storage = DraftStorage()
+card_storage = get_card_storage()
+canon_storage = get_canon_storage()
+draft_storage = get_draft_storage()
+
+
+def _is_http_url(url: str) -> bool:
+    """Allow any http/https URL for manual crawling/analysis."""
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    if not parsed.netloc:
+        return False
+    return True
 
 
 # Schema definitions
 class SearchRequest(BaseModel):
     query: str
-    engine: str = "all"
+    engine: str = "moegirl"
 
 
 class SearchResult(BaseModel):
@@ -72,11 +95,9 @@ class ExtractResponse(BaseModel):
 @router.post("/search", response_model=List[SearchResult])
 async def search_wikis(request: SearchRequest):
     """Search for relevant Wiki pages"""
-    try:
-        results = search_service.search_wiki(request.query, engine=request.engine, max_results=10)
-        return [SearchResult(**r) for r in results]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # 搜索源固定为萌娘百科（保证稳定、避免引入不受控站点）
+    results = search_service.search_wiki(request.query, engine="moegirl", max_results=10)
+    return [SearchResult(**r) for r in results]
 
 
 @router.post("/preview", response_model=PreviewResponse)
@@ -91,6 +112,8 @@ async def preview_page(request: PreviewRequest):
         Page content and metadata
     """
     try:
+        if not _is_http_url(request.url):
+            return PreviewResponse(success=False, error="仅支持 http/https 链接。")
         result = crawler_service.scrape_page(request.url)
         
         if not result['success']:
@@ -122,6 +145,8 @@ async def extract_cards(request: ExtractRequest):
         url = request.url or ""
 
         if url:
+            if not _is_http_url(url):
+                return {"success": False, "error": "仅支持 http/https 链接。", "proposals": []}
             crawl_result = crawler_service.scrape_page(url)
             if not crawl_result.get("success"):
                 return {"success": False, "error": crawl_result.get("error", "Crawl failed"), "proposals": []}
@@ -129,7 +154,7 @@ async def extract_cards(request: ExtractRequest):
             content = crawl_result.get("llm_content") or crawl_result.get("content") or content
 
         if not content:
-            return {"success": False, "error": "No content to extract", "proposals": []}
+            return {"success": False, "error": "没有可提取的内容。", "proposals": []}
 
         agent = ArchivistAgent(
             gateway=get_gateway(),
@@ -146,7 +171,7 @@ async def extract_cards(request: ExtractRequest):
             "proposals": [proposal],
         }
     except Exception as e:
-        logger.error(f"Extraction failed: {e}", exc_info=True)
+        logger.error("Extraction failed: %s", e, exc_info=True)
         return {
             "success": False,
             "error": str(e),
@@ -157,7 +182,21 @@ async def extract_cards(request: ExtractRequest):
 async def batch_extract_cards(request: BatchExtractRequest):
     """Batch extraction for multiple pages (one card per page)"""
     try:
-        urls = request.urls[:50]
+        max_batch = 80
+        urls = request.urls[:max_batch]
+        if len(request.urls) > max_batch:
+            return {
+                "success": False,
+                "error": f"一次最多提取 {max_batch} 个链接，请分批操作。",
+                "proposals": [],
+            }
+        invalid = [u for u in urls if not _is_http_url(u)]
+        if invalid:
+            return {
+                "success": False,
+                "error": "存在非 http/https 链接，请取消勾选后重试。",
+                "proposals": [],
+            }
         results = await crawler_service.scrape_pages_concurrent(urls)
 
         agent = ArchivistAgent(
@@ -185,7 +224,7 @@ async def batch_extract_cards(request: BatchExtractRequest):
         return {"success": True, "proposals": proposals}
         
     except Exception as e:
-        logger.error(f"Batch extraction failed: {e}", exc_info=True)
+        logger.error("Batch extraction failed: %s", e, exc_info=True)
         return {
             "success": False,
             "error": str(e),

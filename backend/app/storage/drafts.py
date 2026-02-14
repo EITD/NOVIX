@@ -5,15 +5,21 @@ Manages scene briefs, drafts, reviews, and summaries.
 
 import shutil
 from pathlib import Path
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+import os
 
+from app.config import config as app_cfg
 from app.context.retriever import DynamicContextRetriever
 from app.schemas.draft import ChapterSummary, Draft, ReviewResult, SceneBrief
 from app.schemas.volume import VolumeSummary
 from app.storage.base import BaseStorage
 from app.storage.volumes import VolumeStorage
 from app.utils.chapter_id import ChapterIDValidator, normalize_chapter_id
+
+# Max number of previous-version backups to keep per chapter.
+_storage_cfg = app_cfg.get("storage", {})
+MAX_DRAFT_PREV_BACKUPS = int(_storage_cfg.get("max_draft_prev_backups", 3))
 
 
 class DraftStorage(BaseStorage):
@@ -78,6 +84,98 @@ class DraftStorage(BaseStorage):
         if not candidates:
             return None
         return max(candidates, key=lambda path: path.stat().st_mtime)
+
+    def _final_paths(self, project_id: str, chapter: str) -> Tuple[Path, Path]:
+        canonical = self._canonicalize_chapter_id(chapter)
+        self._migrate_chapter_dir(project_id, chapter, canonical)
+        chapter_dir = self.get_project_path(project_id) / "drafts" / canonical
+        final_path = chapter_dir / "final.md"
+        history_dir = chapter_dir / "history"
+        return final_path, history_dir
+
+    @staticmethod
+    def _rotate_draft_history(final_path: Path, history_dir: Path) -> None:
+        """Move current final.md into history/ with timestamp, prune old backups."""
+        history_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        backup_name = f"final_{ts}.md"
+        try:
+            os.replace(str(final_path), str(history_dir / backup_name))
+        except OSError:
+            return
+
+        backups = sorted(
+            [p for p in history_dir.iterdir() if p.name.startswith("final_") and p.suffix == ".md"],
+            key=lambda p: p.stat().st_mtime,
+        )
+        while len(backups) > MAX_DRAFT_PREV_BACKUPS:
+            oldest = backups.pop(0)
+            try:
+                oldest.unlink()
+            except OSError:
+                pass
+
+    async def save_current_draft(
+        self,
+        project_id: str,
+        chapter: str,
+        content: str,
+        word_count: Optional[int] = None,
+        pending_confirmations: Optional[List[str]] = None,
+        create_prev_backup: bool = True,
+    ) -> Draft:
+        """Save the current draft (single-version) to final.md.
+
+        设计目标：
+        - 用户只看到"当前正文"，保存语义为覆盖写（类似 VSCode Auto Save）
+        - 为防误写，默认保留最近 N 份历史备份（history/final_<timestamp>.md）
+
+        Args:
+            project_id: Project id.
+            chapter: Chapter id.
+            content: Draft content.
+            word_count: Optional word count override.
+            pending_confirmations: Optional pending confirmations for meta.
+            create_prev_backup: Whether to keep history backups (best-effort).
+
+        Returns:
+            Draft meta object (version 固定为 "current").
+        """
+        canonical = self._canonicalize_chapter_id(chapter)
+        final_path, history_dir = self._final_paths(project_id, canonical)
+        payload = content or ""
+        wc = int(word_count if word_count is not None else len(payload))
+
+        if create_prev_backup and final_path.exists():
+            self._rotate_draft_history(final_path, history_dir)
+
+        try:
+            await self.write_text(final_path, payload)
+        except Exception:
+            # If writing failed after we rotated, attempt to restore from latest backup.
+            if create_prev_backup and history_dir.exists() and not final_path.exists():
+                backups = sorted(
+                    [p for p in history_dir.iterdir() if p.name.startswith("final_") and p.suffix == ".md"],
+                    key=lambda p: p.stat().st_mtime,
+                )
+                if backups:
+                    try:
+                        os.replace(str(backups[-1]), str(final_path))
+                    except OSError:
+                        pass
+            raise
+
+        draft = Draft(
+            chapter=canonical,
+            version="current",
+            content=payload,
+            word_count=wc,
+            pending_confirmations=pending_confirmations or [],
+            created_at=datetime.now(),
+        )
+        meta_path = final_path.with_suffix(".meta.yaml")
+        await self.write_yaml(meta_path, draft.model_dump(mode="json"))
+        return draft
 
     async def get_chapter_tail_chunks(
         self,
@@ -298,18 +396,40 @@ class DraftStorage(BaseStorage):
 
     async def save_final_draft(self, project_id: str, chapter: str, content: str) -> None:
         """Save a final draft."""
-        canonical = self._canonicalize_chapter_id(chapter)
-        self._migrate_chapter_dir(project_id, chapter, canonical)
-        file_path = self.get_project_path(project_id) / "drafts" / canonical / "final.md"
-        await self.write_text(file_path, content)
+        await self.save_current_draft(
+            project_id=project_id,
+            chapter=chapter,
+            content=content,
+            create_prev_backup=True,
+        )
 
     async def get_final_draft(self, project_id: str, chapter: str) -> Optional[str]:
         """Get a final draft."""
         resolved = self._resolve_chapter_dir_name(project_id, chapter)
         file_path = self.get_project_path(project_id) / "drafts" / resolved / "final.md"
-        if not file_path.exists():
+        if file_path.exists():
+            return await self.read_text(file_path)
+
+        # Backward compatibility: migrate from legacy draft_*.md if final.md is missing.
+        legacy_path = self.get_latest_draft_file(project_id, resolved)
+        if not legacy_path or not legacy_path.exists() or legacy_path.name == "final.md":
             return None
-        return await self.read_text(file_path)
+        try:
+            text = await self.read_text(legacy_path)
+        except Exception:
+            return None
+
+        try:
+            await self.save_current_draft(
+                project_id=project_id,
+                chapter=resolved,
+                content=text,
+                create_prev_backup=False,
+            )
+        except Exception:
+            # Migration is best-effort; still return the legacy content if saving failed.
+            pass
+        return text
 
     async def save_chapter_summary(self, project_id: str, summary: ChapterSummary) -> None:
         """Save a chapter summary."""

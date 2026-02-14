@@ -5,6 +5,7 @@ Dynamic context retriever.
 from typing import Any, Dict, List, Tuple
 
 from app.utils.chapter_id import ChapterIDValidator
+from app.utils.dynamic_ranges import calculate_dynamic_ranges
 
 
 class DynamicContextRetriever:
@@ -41,7 +42,7 @@ class DynamicContextRetriever:
                 "chapters_retrieved": 0,
             }
 
-        ranges = self._calculate_dynamic_ranges(total_chapters)
+        ranges = calculate_dynamic_ranges(total_chapters)
         chapter_levels = self._assign_retrieval_levels(all_chapters, current_chapter, ranges)
         context = await self._retrieve_within_budget(project_id, chapter_levels, self.MAX_CONTEXT_TOKENS)
 
@@ -52,17 +53,6 @@ class DynamicContextRetriever:
         context["previous_tail_chunks"] = tail_chunks
         context["total_tokens"] += tail_tokens
         return context
-
-    def _calculate_dynamic_ranges(self, total_chapters: int) -> Dict[str, int]:
-        if total_chapters <= 20:
-            return {"full_facts": 2, "summary_events": 5, "summary_only": 10, "title_only": 20}
-        if total_chapters <= 50:
-            return {"full_facts": 2, "summary_events": 5, "summary_only": 15, "title_only": 50}
-        if total_chapters <= 100:
-            return {"full_facts": 3, "summary_events": 8, "summary_only": 25, "title_only": 100}
-        if total_chapters <= 300:
-            return {"full_facts": 3, "summary_events": 10, "summary_only": 40, "title_only": 300}
-        return {"full_facts": 5, "summary_events": 15, "summary_only": 60, "title_only": total_chapters}
 
     def _assign_retrieval_levels(
         self,

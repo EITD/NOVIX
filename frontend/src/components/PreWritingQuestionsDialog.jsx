@@ -1,10 +1,46 @@
-﻿import { useEffect, useState } from 'react';
+﻿/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   写作前问题对话框 - 在生成初稿前收集关键创意指导信息
+ *   Pre-writing questions dialog for collecting key guidance before generation.
+ */
+
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button, Card, Input } from './ui/core';
 
 /**
- * PreWritingQuestionsDialog - 写作前问题确认
- * 在首稿开始前收集关键信息。
+ * 写作前问题确认对话框 - 收集创意指导与关键设定
+ *
+ * Modal dialog displayed before draft generation to collect key information
+ * and creative guidance. Helps ensure the writer agent receives sufficient context.
+ *
+ * @component
+ * @example
+ * return (
+ *   <PreWritingQuestionsDialog
+ *     open={true}
+ *     questions={['场景设定?', '主要冲突?']}
+ *     onConfirm={handleConfirm}
+ *     onSkip={handleSkip}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {boolean} [props.open=false] - 对话框是否打开 / Whether dialog is open
+ * @param {Array} [props.questions=[]] - 问题列表 / List of questions to ask
+ * @param {Function} [props.onConfirm] - 确认回调，传递答案数组 / Confirm callback with answers
+ * @param {Function} [props.onSkip] - 跳过回调 / Skip callback
+ * @param {string} [props.title='写作前确认'] - 对话框标题 / Dialog title
+ * @param {string} [props.subtitle='先回答几个关键问题，帮助主笔精准开写。'] - 子标题 / Subtitle
+ * @param {string} [props.confirmText='开始撰写'] - 确认按钮文本 / Confirm button text
+ * @param {string} [props.skipText='跳过'] - 跳过按钮文本 / Skip button text
+ * @returns {JSX.Element} 写作前问题对话框 / Pre-writing questions dialog
  */
 export default function PreWritingQuestionsDialog({
     open,

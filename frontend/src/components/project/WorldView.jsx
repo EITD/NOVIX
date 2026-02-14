@@ -1,19 +1,46 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   世界观卡片视图 - 展示世界观设定列表和编辑表单，支持地点、组织、物品等
+ *   Worldview component for displaying world-building cards with CRUD operations.
+ */
+
+import React, { useState, useEffect } from 'react';
 import { cardsAPI } from '../../api';
 import { Card, Button, Input } from '../ui/core';
 import { Plus, Globe, X, Save } from 'lucide-react';
 
+/**
+ * 星级规范化函数 / Star rating normalization
+ * @param {*} value - 要规范化的值 / Value to normalize
+ * @returns {number} 规范化后的星级 / Normalized rating
+ */
 const normalizeStars = (value) => {
   const parsed = parseInt(value, 10);
   if (Number.isNaN(parsed)) return 1;
   return Math.max(1, Math.min(parsed, 3));
 };
 
+/**
+ * 格式化别名函数 / Format aliases string
+ * @param {*} value - 别名值 / Aliases value
+ * @returns {string} 格式化字符串 / Formatted string
+ */
 const formatAliases = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean).join('，');
   return value || '';
 };
 
+/**
+ * 解析列表输入函数 / Parse comma/newline-separated list
+ * @param {string} value - 列表文本 / List text
+ * @returns {Array} 解析后的数组 / Parsed array
+ */
 const parseListInput = (value) => {
   return String(value || '')
     .split(/[,，;；\n]/)
@@ -21,11 +48,43 @@ const parseListInput = (value) => {
     .filter(Boolean);
 };
 
+/**
+ * 格式化规则输入函数 / Format rules with newlines
+ * @param {*} value - 规则值 / Rules value
+ * @returns {string} 格式化字符串 / Formatted string
+ */
 const formatRulesInput = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean).join('\n');
   return value || '';
 };
 
+/**
+ * 世界观卡片视图组件 - 展示和编辑世界观设定
+ *
+ * Component for displaying and editing worldview cards (locations, organizations, items).
+ * Provides CRUD interface with support for multiple worldview categories.
+ *
+ * @component
+ * @example
+ * return (
+ *   <WorldView
+ *     worlds={[{ id: 'w001', name: '东京', type: 'location' }]}
+ *     onEdit={handleEdit}
+ *     onSave={handleSave}
+ *     projectId="proj-001"
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {Array} [props.worlds=[]] - 世界观卡片列表 / Worldview cards
+ * @param {Function} [props.onEdit] - 编辑回调 / Edit callback
+ * @param {Function} [props.onSave] - 保存回调 / Save callback
+ * @param {string} [props.projectId] - 项目ID / Project identifier
+ * @param {string|null} [props.editing=null] - 编辑中的卡片ID / Card ID being edited
+ * @param {Object|null} [props.editingWorld=null] - 编辑中的卡片数据 / Card data being edited
+ * @param {Function} [props.onCancel] - 取消编辑回调 / Cancel edit callback
+ * @returns {JSX.Element} 世界观卡片视图 / Worldview view element
+ */
 /**
  * WorldView - 世界设定视图
  * 负责设定卡列表与编辑表单展示。
@@ -60,17 +119,8 @@ export function WorldView({ projectId }) {
   const loadCards = async () => {
     setLoading(true);
     try {
-      const response = await cardsAPI.listWorld(projectId);
-      const names = response.data || [];
-      const loaded = [];
-      for (const name of names) {
-        try {
-          const cardRes = await cardsAPI.getWorld(projectId, name);
-          loaded.push(cardRes.data);
-        } catch {
-          // ignore
-        }
-      }
+      const response = await cardsAPI.listWorldIndex(projectId);
+      const loaded = Array.isArray(response.data) ? response.data : [];
       setCards(loaded);
     } finally {
       setLoading(false);

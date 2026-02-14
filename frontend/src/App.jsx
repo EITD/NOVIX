@@ -1,17 +1,37 @@
 ﻿/**
- * WenShape App - 主路由配置
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
  *
- * IDE-First 设计：用户进入应用后直接进入 IDE 工作区。
- * - / : 自动重定向到最近项目的 IDE，或创建默认项目
- * - /project/:projectId/session : IDE 主界面
- * - /agents : 智能体配置（当前从入口回到首页）
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   应用主路由配置 - IDE-First 设计的核心入口
  */
+
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import WritingSession from './pages/WritingSession';
 import ErrorBoundary from './components/ErrorBoundary';
 import { projectsAPI } from './api';
+import logger from './utils/logger';
 
+/**
+ * 自动重定向组件 / Auto-Redirect Component
+ *
+ * 应用加载时的首个入口。负责：
+ * 1. 检查已存在的项目列表
+ * 2. 重定向到最近项目的 IDE，或自动创建首个默认项目
+ * 3. 提供加载中和错误状态的 UI 反馈
+ *
+ * 路由配置：
+ * - /project/:projectId/session - IDE 主界面
+ * - /agents - 智能体配置（已弃用，自动回到首页）
+ * - /system - 系统设置（已弃用，自动回到首页）
+ *
+ * @component
+ * @returns {JSX.Element} 加载/错误页面或无返回（重定向发生）
+ */
 function AutoRedirect() {
   const navigate = useNavigate();
   const [error, setError] = useState(null);
@@ -30,7 +50,7 @@ function AutoRedirect() {
         const newProject = await projectsAPI.create({ name: '我的第一个项目' });
         navigate(`/project/${newProject.data.id}/session`, { replace: true });
       } catch (err) {
-        console.error('Failed to load projects:', err);
+        logger.error('Failed to load projects:', err);
         setError(err?.message || String(err));
       }
     };

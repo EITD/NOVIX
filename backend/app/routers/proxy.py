@@ -8,6 +8,9 @@ from pydantic import BaseModel
 from typing import Optional, List
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/proxy", tags=["proxy"])
 
@@ -40,7 +43,7 @@ async def fetch_models(request: FetchModelsRequest):
         # 注意：无论成功/失败都要 return，避免 fallthrough 到 OpenAI 客户端导致 400（前端误以为“拉取失败”）。
         if provider == "anthropic":
             try:
-                print(f"Fetch Models Debug: Provider=anthropic, BaseURL={base_url or '(default)'}")
+                logger.debug("Fetch Models Debug: Provider=anthropic, BaseURL=%s", base_url or "(default)")
                 if base_url:
                     client = AsyncAnthropic(api_key=request.api_key, base_url=base_url)
                 else:
@@ -56,16 +59,16 @@ async def fetch_models(request: FetchModelsRequest):
                         break
 
                 if model_ids:
-                    print(f"Fetch Models Success: Found {len(model_ids)} models (anthropic)")
+                    logger.info("Fetch Models Success: Found %s models (anthropic)", len(model_ids))
                     return {"models": sorted(set(model_ids))}
 
-                print("Fetch Models Warning (anthropic): empty models list")
+                logger.warning("Fetch Models Warning (anthropic): empty models list")
                 return {
                     "models": ANTHROPIC_FALLBACK_MODELS,
                     "warning": "Anthropic 模型列表为空，已返回内置候选列表（实际可用性以真实调用为准）。",
                 }
             except Exception as e:
-                print(f"Fetch Models Error (anthropic): {str(e)}")
+                logger.warning("Fetch Models Error (anthropic): %s", str(e))
                 return {
                     "models": ANTHROPIC_FALLBACK_MODELS,
                     "warning": f"Anthropic 模型列表拉取失败，已返回内置候选列表。原因：{str(e)}",
@@ -90,7 +93,7 @@ async def fetch_models(request: FetchModelsRequest):
         
         # Initialize temp client
         # Note: Some providers might not implement /v1/models correctly.
-        print(f"Fetch Models Debug: Provider={provider}, BaseURL={base_url}")
+        logger.debug("Fetch Models Debug: Provider=%s, BaseURL=%s", provider, base_url)
         
         client = AsyncOpenAI(
             api_key=request.api_key,
@@ -101,9 +104,9 @@ async def fetch_models(request: FetchModelsRequest):
         
         # Extract model IDs
         model_ids = [m.id for m in models_response.data]
-        print(f"Fetch Models Success: Found {len(model_ids)} models")
+        logger.info("Fetch Models Success: Found %s models", len(model_ids))
         return {"models": sorted(model_ids)}
         
     except Exception as e:
-        print(f"Fetch Models Error: {str(e)}")
+        logger.warning("Fetch Models Error: %s", str(e))
         raise HTTPException(status_code=400, detail=str(e))

@@ -46,7 +46,7 @@ def run_pyinstaller():
     # Command arguments
     args = [
         "pyinstaller",
-        "--name", "NOVIX",
+        "--name", "WenShape",
         "--clean",
         "--noconfirm",
         # Add backend/static directory to the bundle
@@ -79,7 +79,7 @@ def run_pyinstaller():
     
 def finalize_package():
     print("--- Finalizing Package ---")
-    dist_dir = Path("dist/NOVIX")
+    dist_dir = Path("dist/WenShape")
     
     # 1. Copy config example or config.yaml
     config_src = Path("backend/config.yaml")

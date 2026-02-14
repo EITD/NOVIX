@@ -1,11 +1,50 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   批量同步分析对话框 - 选择要分析的章节后批量触发后端分析流程
+ *   Analysis sync dialog for selecting chapters and triggering batch analysis.
+ */
+
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check } from 'lucide-react';
 import { Button } from '../ui/core';
 import { draftsAPI, volumesAPI } from '../../api';
 import { cn } from '../ui/core';
 
-// 辅助函数保持原逻辑
+/**
+ * 批量同步分析对话框 - 用户选择要分析的章节并批量触发分析
+ *
+ * Modal dialog for selecting chapters to analyze and triggering batch analysis.
+ * Only optimizes visual consistency without altering data and behavior logic.
+ *
+ * @component
+ * @example
+ * return (
+ *   <AnalysisSyncDialog
+ *     open={true}
+ *     projectId="proj-001"
+ *     onConfirm={handleConfirm}
+ *     onCancel={handleCancel}
+ *     loading={false}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {boolean} [props.open=false] - 对话框是否打开 / Whether dialog is open
+ * @param {string} [props.projectId] - 项目ID / Project identifier
+ * @param {Function} [props.onConfirm] - 确认回调，返回选中章节数组 / Confirm callback with selected chapters
+ * @param {Function} [props.onCancel] - 取消回调 / Cancel callback
+ * @param {boolean} [props.loading=false] - 是否加载中 / Whether loading
+ * @returns {JSX.Element} 批量同步分析对话框 / Analysis sync dialog element
+ */
+
+// 辅助函数保持原逻辑 / Helper functions maintain original logic
 const getChapterWeight = (chapterId) => {
   const match = chapterId.match(/^(?:V(\d+))?C(\d+)(?:([EI])(\d+))?$/i);
   if (!match) return 0;
@@ -23,11 +62,6 @@ const getVolumeId = (chapterId, summary) => {
   const match = chapterId.match(/^V(\d+)/i);
   return match ? `V${match[1]}` : 'V1';
 };
-
-/**
- * AnalysisSyncDialog - 同步分析弹窗
- * 仅做视觉一致性优化，不改变数据与行为逻辑。
- */
 export default function AnalysisSyncDialog({
   open,
   projectId,
@@ -217,6 +251,7 @@ export default function AnalysisSyncDialog({
               <div className="max-h-[180px] overflow-y-auto">
                 {results.map((item, idx) => {
                   const success = Boolean(item?.success);
+                  const itemError = item?.error || item?.detail || '';
                   const bindingError = item?.binding_error || item?.bindings_error;
                   return (
                     <div
@@ -232,6 +267,11 @@ export default function AnalysisSyncDialog({
                       <div className="text-[11px] text-[var(--vscode-fg-subtle)] mt-0.5">
                         人物：{formatCharacters(item?.binding)}
                       </div>
+                      {!success && itemError ? (
+                        <div className="text-[11px] text-red-500 mt-0.5">
+                          原因：{String(itemError)}
+                        </div>
+                      ) : null}
                       {bindingError && (
                         <div className="text-[11px] text-red-500 mt-0.5">
                           绑定错误：{bindingError}
@@ -285,6 +325,7 @@ export default function AnalysisSyncDialog({
             onClick={handleRebuildIndexes}
             disabled={loading || indexRebuildLoading}
             className="h-6 px-3 text-xs bg-[var(--vscode-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] rounded-[2px] shadow-none transition-none"
+            title="重建检索索引（设定卡/事实证据/正文分块）。大量导入/同步/修改后可用于提升检索稳定性。"
           >
             {indexRebuildLoading ? '重建中...' : '重建索引'}
           </Button>

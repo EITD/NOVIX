@@ -5,6 +5,7 @@ import useSWR, { mutate } from 'swr';
 import { projectsAPI } from '../../api';
 import { Bot, ChevronDown, Folder, Plus, Check, Trash2, Home } from 'lucide-react';
 import { cn } from '../ui/core';
+import logger from '../../utils/logger';
 
 const fetcher = (fn) => fn().then((res) => res.data);
 
@@ -12,7 +13,7 @@ const fetcher = (fn) => fn().then((res) => res.data);
  * TitleBar - 顶部标题栏
  * 负责项目切换与快捷操作入口，不改变业务逻辑。
  */
-export function TitleBar({ projectName, chapterTitle, rightActions }) {
+export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
   const navigate = useNavigate();
   const { projectId } = useParams();
   const { state, dispatch } = useIDE();
@@ -50,7 +51,7 @@ export function TitleBar({ projectName, chapterTitle, rightActions }) {
       setMenuOpen(false);
       navigate(`/project/${res.data.id}/session`);
     } catch (error) {
-      console.error('Failed to create project:', error);
+      logger.error('Failed to create project:', error);
     } finally {
       setCreating(false);
     }
@@ -66,7 +67,7 @@ export function TitleBar({ projectName, chapterTitle, rightActions }) {
         navigate('/');
       }
     } catch (error) {
-      console.error('Failed to delete project:', error);
+      logger.error('Failed to delete project:', error);
     }
   };
 
@@ -185,6 +186,11 @@ export function TitleBar({ projectName, chapterTitle, rightActions }) {
 
       <div className="flex-1 flex items-center justify-center gap-2 text-sm">
         {state.unsavedChanges && <span className="text-yellow-600 text-lg">•</span>}
+        {aiHint && (
+          <span className="text-[10px] px-2 py-0.5 rounded-[999px] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg-subtle)]">
+            {aiHint}
+          </span>
+        )}
         {chapterTitle && <span className="text-[var(--vscode-fg)] font-medium">{chapterTitle}</span>}
       </div>
 

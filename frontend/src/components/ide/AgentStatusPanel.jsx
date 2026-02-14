@@ -9,7 +9,7 @@
 
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ChevronDown, Send, Sparkles, Copy } from 'lucide-react';
+import { ChevronDown, Send, Sparkles, Copy, X } from 'lucide-react';
 
 // 消息项组件
 const MessageItem = ({ type, content, time }) => {
@@ -178,6 +178,15 @@ const AgentStatusPanel = ({
     mode = 'create',
     onModeChange = () => { },
     createDisabled = false,
+    inputDisabled = false,
+    inputDisabledReason = '',
+    selectionCandidateSummary = '',
+    selectionAttachedSummary = '',
+    selectionCandidateDifferent = false,
+    onAttachSelection = () => { },
+    onClearAttachedSelection = () => { },
+    editScope = 'document',
+    onEditScopeChange = () => { },
     contextDebug = null,
     progressEvents = [],
     messages = [],
@@ -185,6 +194,11 @@ const AgentStatusPanel = ({
     activeChapter = null,
     editContextMode = 'quick',
     onEditContextModeChange = () => { },
+    diffReview = null,
+    diffDecisions = null,
+    onAcceptAllDiff = () => { },
+    onRejectAllDiff = () => { },
+    onApplySelectedDiff = () => { },
     onSubmit = () => { },
     className = ''
 }) => {
@@ -283,11 +297,36 @@ const AgentStatusPanel = ({
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages.length, progressEvents.length, contextDebug]);
 
-    const hasAnyContent = runs.length > 0 || Boolean(contextDebug);
+    const diffSummary = useMemo(() => {
+        if (!diffReview?.hunks?.length) return null;
+        const total = diffReview.hunks.length;
+        const decisions = diffDecisions || {};
+        let accepted = 0;
+        let rejected = 0;
+        let pending = 0;
+        diffReview.hunks.forEach((hunk) => {
+            const decision = decisions[hunk.id];
+            if (decision === 'accepted') accepted += 1;
+            else if (decision === 'rejected') rejected += 1;
+            else pending += 1;
+        });
+        return {
+            total,
+            accepted,
+            rejected,
+            pending,
+            additions: diffReview.stats?.additions || 0,
+            deletions: diffReview.stats?.deletions || 0,
+        };
+    }, [diffReview, diffDecisions]);
+
+    const hasDiffActions = Boolean(diffSummary);
+    const hasAnyContent = runs.length > 0 || Boolean(contextDebug) || hasDiffActions;
 
     const handleSubmit = () => {
+        if (inputDisabled) return;
         if (!inputValue.trim()) return;
-        onSubmit(inputValue);
+        onSubmit(inputValue.trim());
         setInputValue('');
         if (inputRef.current) {
             inputRef.current.style.height = 'auto';
@@ -423,6 +462,47 @@ const AgentStatusPanel = ({
                     </div>
                 ) : (
                     <>
+                        {hasDiffActions ? (
+                            <div className="border border-[var(--vscode-sidebar-border)] rounded-[6px] bg-[var(--vscode-input-bg)] my-2 overflow-hidden">
+                                <div className="px-3 py-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-xs font-bold text-[var(--vscode-fg)]">修改完成</div>
+                                        <div className="text-[10px] text-[var(--vscode-fg-subtle)]">
+                                            {diffSummary.additions} 新增 / {diffSummary.deletions} 删除
+                                        </div>
+                                    </div>
+                                    <div className="text-[10px] text-[var(--vscode-fg-subtle)] mt-1">
+                                        共 {diffSummary.total} 处修改，已接受 {diffSummary.accepted}，已拒绝 {diffSummary.rejected}，待确认 {diffSummary.pending}
+                                    </div>
+                                </div>
+                                <div className="px-3 py-2 text-[10px] text-[var(--vscode-fg-subtle)]">
+                                    可逐块调整后选择“应用已接受修改”，或直接全部接受/拒绝。
+                                </div>
+                                <div className="px-3 pb-3 flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={onRejectAllDiff}
+                                        className="text-[10px] px-3 py-1.5 rounded-[6px] border border-red-200 text-red-600 hover:bg-red-50 transition-colors"
+                                    >
+                                        拒绝全部
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={onAcceptAllDiff}
+                                        className="text-[10px] px-3 py-1.5 rounded-[6px] border border-green-200 text-green-700 hover:bg-green-50 transition-colors"
+                                    >
+                                        接受全部
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={onApplySelectedDiff}
+                                        className="text-[10px] px-3 py-1.5 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 transition-colors"
+                                    >
+                                        应用已接受修改
+                                    </button>
+                                </div>
+                            </div>
+                        ) : null}
                         {feedItems.map((item) => {
                             if (item.kind === 'run') {
                                 return (
@@ -501,19 +581,19 @@ const AgentStatusPanel = ({
 
             {/* 底部输入框 */}
             <div className="flex-shrink-0 p-3 border-t border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
-            <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-1">
                     <button
                         type="button"
                         onClick={() => onModeChange('create')}
-                            disabled={createDisabled}
+                            disabled={createDisabled || inputDisabled}
                             title={createDisabled ? '正文非空：主笔仅在正文为空时可用' : '主笔：用于撰写新正文（流式输出）'}
                             className={[
                                 "px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors",
                                 mode === 'create'
                                     ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
                                     : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
-                                createDisabled ? "opacity-50 cursor-not-allowed" : ""
+                                (createDisabled || inputDisabled) ? "opacity-50 cursor-not-allowed" : ""
                             ].join(' ')}
                         >
                         主笔
@@ -522,11 +602,13 @@ const AgentStatusPanel = ({
                         type="button"
                         onClick={() => onModeChange('edit')}
                         title="编辑：生成差异块，可选择接受或撤销"
+                        disabled={inputDisabled}
                             className={[
                                 "px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors",
                                 mode === 'edit'
                                     ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
-                                    : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]"
+                                    : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
+                                inputDisabled ? "opacity-50 cursor-not-allowed" : ""
                             ].join(' ')}
                         >
                         编辑
@@ -537,11 +619,13 @@ const AgentStatusPanel = ({
                                 type="button"
                                 onClick={() => onEditContextModeChange('quick')}
                                 title="快速：直接使用本章最新记忆包（不重建）"
+                                disabled={inputDisabled}
                                 className={[
                                     "px-2 h-7 text-[11px] rounded-[6px] border transition-colors",
                                     editContextMode === 'quick'
                                         ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
-                                        : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]"
+                                        : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
+                                    inputDisabled ? "opacity-50 cursor-not-allowed" : ""
                                 ].join(' ')}
                             >
                                 快速
@@ -550,11 +634,13 @@ const AgentStatusPanel = ({
                                 type="button"
                                 onClick={() => onEditContextModeChange('full')}
                                 title="完整：先重建本章记忆包（更接近完整检索/分析）"
+                                disabled={inputDisabled}
                                 className={[
                                     "px-2 h-7 text-[11px] rounded-[6px] border transition-colors",
                                     editContextMode === 'full'
                                         ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
-                                        : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]"
+                                        : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
+                                    inputDisabled ? "opacity-50 cursor-not-allowed" : ""
                                 ].join(' ')}
                             >
                                 完整
@@ -566,27 +652,112 @@ const AgentStatusPanel = ({
                     {mode === 'edit' ? '差异修改' : '流式撰写'}
                 </span>
                 </div>
-                <div className="flex gap-2">
-                    <textarea
-                        ref={inputRef}
-                        rows={1}
-                        value={inputValue}
-                        onChange={(e) => {
-                            setInputValue(e.target.value);
-                            updateInputHeight(e.target);
-                        }}
-                        onKeyDown={handleKeyDown}
-                        onFocus={(e) => updateInputHeight(e.target)}
-                        placeholder={mode === 'edit' ? "输入修改指令（将生成差异块）..." : "输入本章创作指令（正文需为空）..."}
-                        className="flex-1 px-3 py-2 text-sm border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none overflow-hidden min-h-[40px]"
-                    />
-                    <button
-                        onClick={handleSubmit}
-                        disabled={!inputValue.trim()}
-                        className="px-3 h-10 bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] rounded-[6px] border border-[var(--vscode-input-border)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                        <Send size={16} />
-                    </button>
+                {mode === 'edit' ? (
+                    <div className="flex items-center justify-between mb-2 gap-2">
+                        <div className="text-[10px] text-[var(--vscode-fg-subtle)]">
+                            {selectionCandidateSummary || '未选中内容'}
+                        </div>
+                        {selectionCandidateSummary ? (
+                            <div className="flex items-center gap-1">
+                                <button
+                                    type="button"
+                                    disabled={inputDisabled}
+                                    onClick={() => onEditScopeChange('document')}
+                                    className={[
+                                        "px-2 h-6 text-[10px] rounded-[6px] border transition-colors",
+                                        editScope === 'document'
+                                            ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
+                                            : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
+                                        inputDisabled ? "opacity-50 cursor-not-allowed" : ""
+                                    ].join(' ')}
+                                    title="对全章生成差异修改"
+                                >
+                                    全章
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={inputDisabled || !selectionAttachedSummary}
+                                    onClick={() => onEditScopeChange('selection')}
+                                    className={[
+                                        "px-2 h-6 text-[10px] rounded-[6px] border transition-colors",
+                                        editScope === 'selection'
+                                            ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
+                                            : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
+                                        (inputDisabled || !selectionAttachedSummary) ? "opacity-50 cursor-not-allowed" : ""
+                                    ].join(' ')}
+                                    title={selectionAttachedSummary ? "仅对已添加的选区生成差异修改（更稳定）" : "请先点击“添加到对话”"}
+                                >
+                                    选区
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={inputDisabled || (selectionAttachedSummary && !selectionCandidateDifferent)}
+                                    onClick={onAttachSelection}
+                                    className={[
+                                        "px-2 h-6 text-[10px] rounded-[6px] border transition-colors",
+                                        "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
+                                        (inputDisabled || (selectionAttachedSummary && !selectionCandidateDifferent)) ? "opacity-50 cursor-not-allowed" : ""
+                                    ].join(' ')}
+                                    title="将当前选区添加到对话（后续编辑会使用该选区）"
+                                >
+                                    {selectionAttachedSummary ? (selectionCandidateDifferent ? '替换选区' : '已添加') : '添加到对话'}
+                                </button>
+                            </div>
+                        ) : null}
+                    </div>
+                ) : null}
+                {mode === 'edit' && selectionAttachedSummary ? (
+                    <div className="flex items-center justify-between mb-2 gap-2">
+                        <div className="text-[10px] px-2 py-1 rounded-[6px] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg-subtle)]">
+                            {selectionAttachedSummary}
+                        </div>
+                        <button
+                            type="button"
+                            disabled={inputDisabled}
+                            onClick={onClearAttachedSelection}
+                            className={[
+                                "p-1 rounded-[6px] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] hover:border-[var(--vscode-focus-border)] transition-colors",
+                                inputDisabled ? "opacity-50 cursor-not-allowed" : ""
+                            ].join(' ')}
+                            title="撤销添加选区"
+                            aria-label="撤销添加选区"
+                        >
+                            <X size={14} />
+                        </button>
+                    </div>
+                ) : null}
+                <div className="flex flex-col gap-2">
+                    {inputDisabled && inputDisabledReason ? (
+                        <div className="text-[10px] text-[var(--vscode-fg-subtle)] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-input-bg)] rounded-[6px] px-3 py-2">
+                            {inputDisabledReason}
+                        </div>
+                    ) : null}
+                    <div className="flex gap-2">
+                        <textarea
+                            ref={inputRef}
+                            rows={1}
+                            value={inputValue}
+                            onChange={(e) => {
+                                setInputValue(e.target.value);
+                                updateInputHeight(e.target);
+                            }}
+                            onKeyDown={handleKeyDown}
+                            onFocus={(e) => updateInputHeight(e.target)}
+                            disabled={inputDisabled}
+                            placeholder={mode === 'edit' ? "输入修改指令（将生成差异块）..." : "输入本章创作指令（正文需为空）..."}
+                            className={[
+                                "flex-1 px-3 py-2 text-sm border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none overflow-hidden min-h-[40px]",
+                                inputDisabled ? "opacity-60 cursor-not-allowed" : ""
+                            ].join(' ')}
+                        />
+                        <button
+                            onClick={handleSubmit}
+                            disabled={inputDisabled || !inputValue.trim()}
+                            className="px-3 h-10 bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] rounded-[6px] border border-[var(--vscode-input-border)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                            <Send size={16} />
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

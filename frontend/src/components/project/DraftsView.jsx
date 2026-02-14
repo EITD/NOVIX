@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { draftsAPI } from '../../api';
 import { Button, Card } from '../ui/core';
 import { FileText, Trash2, Eye, EyeOff, BookOpen, Clock, ChevronRight, Sparkles, Drama } from 'lucide-react';
+import logger from '../../utils/logger';
 
 /**
  * DraftsView - 章节草稿与版本视图
@@ -36,7 +37,7 @@ export function DraftsView({ projectId }) {
       const sorted = sortChapters(chapterList);
       setChapters(sorted);
     } catch (e) {
-      console.error(e);
+      logger.error(e);
     }
   };
 
@@ -81,7 +82,7 @@ export function DraftsView({ projectId }) {
         setSummary(null);
       }
     } catch (e) {
-      console.error(e);
+      logger.error(e);
     }
   };
 

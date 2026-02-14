@@ -1,5 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Chapter bindings router.
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  章节绑定路由 - 提供章节实体绑定的查询和批量重建 API，关联角色/世界观卡片到章节文本。
+  Chapter bindings router - Provides query and batch rebuild APIs for chapter-to-entity associations (character and world cards).
 """
 
 from typing import Any, Dict, List, Optional

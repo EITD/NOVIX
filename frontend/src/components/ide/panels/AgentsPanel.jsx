@@ -1,6 +1,31 @@
 /**
- * AgentsPanel - 智能体面板
- * 仅做视觉一致性优化，不改变数据与交互逻辑。
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   智能体面板 - 配置和管理 LLM 提供商、模型选择与智能体绑定关系
+ *   Agents panel for configuring LLM providers, selecting models, and managing agent assignments.
+ */
+
+/**
+ * 智能体配置面板 - LLM 提供商和智能体绑定的集中管理界面
+ *
+ * IDE panel for configuring LLM profiles (provider and model selection) and assigning them to agents.
+ * Supports visual consistency optimization without altering core business logic.
+ *
+ * @component
+ * @example
+ * return (
+ *   <AgentsPanel mode="config" />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {React.ReactNode} [props.children] - 子组件 / Child components
+ * @param {string} [props.mode='assistant'] - 面板模式 / Panel mode (assistant|config)
+ * @returns {JSX.Element} 智能体面板 / Agents panel element
  */
 import { useState } from 'react';
 import useSWR, { mutate } from 'swr';
@@ -9,18 +34,19 @@ import { AnimatePresence } from 'framer-motion';
 import { configAPI } from '../../../api';
 import { cn, Button } from '../../ui/core';
 import LLMProfileModal from '../../../components/LLMProfileModal';
+import logger from '../../../utils/logger';
 
-// SWR 获取器
+// SWR 数据获取器 / SWR data fetcher
 const fetcher = (fn) => fn().then(res => res.data);
 
-const ROLES = [
-    { id: 'archivist', label: '档案员', desc: '整理设定与构建上下文' },
-    { id: 'writer', label: '主笔', desc: '撰写章节正文' },
-    { id: 'editor', label: '编辑', desc: '根据反馈修订章节' },
+const BINDING_ROLES = [
+    { id: 'archivist', label: '档案管理', desc: '除写作以外的分析/检索/同步等任务' },
+    { id: 'writing', label: '写作', desc: '主笔 + 编辑（共用同一模型）' },
 ];
 
 const AgentsPanel = ({ children, mode = 'assistant' }) => {
     // mode: 'assistant'（右侧 AI 面板）| 'config'（左侧：仅配置）
+    // mode: 'assistant' (right AI panel) | 'config' (left: config only)
 
     // 数据获取
     const { data: profiles = [], isLoading: loadingProfiles } = useSWR(
@@ -40,14 +66,18 @@ const AgentsPanel = ({ children, mode = 'assistant' }) => {
     const [selectedProfile, setSelectedProfile] = useState(null);
 
     // 事件处理
-    const handleAssignmentChange = async (roleId, profileId) => {
-        const newAssignments = { ...assignments, [roleId]: profileId };
+    const handleAssignmentChange = async (roleIds, profileId) => {
+        const ids = Array.isArray(roleIds) ? roleIds : [roleIds];
+        const newAssignments = { ...assignments };
+        ids.forEach((id) => {
+            newAssignments[id] = profileId;
+        });
         mutate('agent-assignments', newAssignments, false);
         try {
             await configAPI.updateAssignments(newAssignments);
             mutate('agent-assignments');
         } catch (e) {
-            console.error("Failed to update assignment", e);
+            logger.error("Failed to update assignment", e);
             mutate('agent-assignments');
         }
     };
@@ -70,7 +100,7 @@ const AgentsPanel = ({ children, mode = 'assistant' }) => {
             mutate('llm-profiles');
             mutate('agent-assignments');
         } catch (e) {
-            console.error("Failed to save profile", e);
+            logger.error("Failed to save profile", e);
         }
     };
 
@@ -94,11 +124,18 @@ const AgentsPanel = ({ children, mode = 'assistant' }) => {
                             {/* 角色模型绑定 */}
                             <div className="space-y-3">
                                 <div className="text-xs font-bold text-[var(--vscode-fg-subtle)] uppercase tracking-wider mb-2">角色模型绑定</div>
-                                {ROLES.map(role => {
-                                    const assignedProfileId = assignments[role.id];
+                                {BINDING_ROLES.map(role => {
+                                    const assignedProfileId = role.id === 'writing'
+                                        ? (assignments.writer && assignments.writer === assignments.editor
+                                            ? assignments.writer
+                                            : (assignments.writer || assignments.editor || ''))
+                                        : assignments[role.id];
+                                    const writingMismatch = role.id === 'writing'
+                                        ? Boolean(assignments.writer && assignments.editor && assignments.writer !== assignments.editor)
+                                        : false;
 
                                     // 动态图标选择
-                                    const Icon = role.id === 'archivist' ? Search : role.id === 'writer' ? Edit3 : Bot;
+                                    const Icon = role.id === 'archivist' ? Search : Edit3;
 
                                     return (
                                         <div
@@ -109,7 +146,7 @@ const AgentsPanel = ({ children, mode = 'assistant' }) => {
                                                 <div className="flex items-center gap-3">
                                                     <div className={cn(
                                                         "p-2 rounded-[6px] text-[var(--vscode-fg)] bg-[var(--vscode-list-hover)]",
-                                                        role.id === 'writer' && "font-semibold"
+                                                        role.id === 'writing' && "font-semibold"
                                                     )}>
                                                         <Icon size={16} />
                                                     </div>
@@ -120,10 +157,18 @@ const AgentsPanel = ({ children, mode = 'assistant' }) => {
                                                 </div>
                                             </div>
 
-                                            <div className="relative">
+                                            <div>
+                                                <div className="relative">
                                                 <select
                                                     value={assignedProfileId || ''}
-                                                    onChange={(e) => handleAssignmentChange(role.id, e.target.value)}
+                                                    onChange={(e) => {
+                                                        const next = e.target.value;
+                                                        if (role.id === 'writing') {
+                                                            handleAssignmentChange(['writer', 'editor'], next);
+                                                            return;
+                                                        }
+                                                        handleAssignmentChange(role.id, next);
+                                                    }}
                                                     className="w-full text-xs py-2 pl-2 pr-6 bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] rounded-[6px] focus:border-[var(--vscode-focus-border)] focus:ring-2 focus:ring-[var(--vscode-focus-border)] outline-none transition-none appearance-none cursor-pointer text-[var(--vscode-fg)] font-mono truncate"
                                                 >
                                                     <option value="" disabled>选择模型...</option>
@@ -136,6 +181,12 @@ const AgentsPanel = ({ children, mode = 'assistant' }) => {
                                                 <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--vscode-fg-subtle)]">
                                                     <Bot size={12} />
                                                 </div>
+                                                </div>
+                                                {writingMismatch && (
+                                                    <div className="mt-2 text-[10px] text-[var(--vscode-fg-subtle)]">
+                                                        检测到“主笔/编辑”模型绑定不一致；此处会以主笔为准，重新选择会自动同步两者。
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     );

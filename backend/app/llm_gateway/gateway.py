@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 import app.config as app_config
 from app.utils.logger import get_logger
 from app.services.llm_config_service import llm_config_service
+from app.llm_gateway.errors import classify_error, get_retry_delay
 from app.llm_gateway.providers import (
     BaseLLMProvider,
     OpenAIProvider,
@@ -32,18 +33,19 @@ class LLMGateway:
     Unified LLM gateway with provider management
     统一的大模型网关，支持多提供商管理
     """
-    
+
     def __init__(self):
         """Initialize gateway from profiles"""
         self.providers: Dict[str, BaseLLMProvider] = {}
         # We don't pre-initialize all providers anymore, or we initialize all profiles?
         # Let's initialize all valid profiles for cache
         self._init_profiles()
-        
+
         # Retry configuration / 重试配置
-        self.max_retries = 3
-        self.retry_delays = [1, 2, 4]  # Exponential backoff / 指数退避
-        
+        self.max_retries = 5  # Increased from 3 to 5
+        self.retry_delays = [1, 2, 4, 8, 16]  # Exponential backoff / 指数退避
+        self.max_retry_delay = 60.0  # Maximum delay cap / 最大延迟上限
+
         # Cost tracking / 成本追踪
         self.total_tokens = 0
         self.total_requests = 0
@@ -59,7 +61,7 @@ class LLMGateway:
                 if provider_instance:
                     self.providers[profile["id"]] = provider_instance
             except Exception as e:
-                logger.error(f"Failed to init profile {profile.get('name')}: {e}")
+                logger.error("Failed to init profile %s: %s", profile.get('name'), e)
 
     def _try_load_profile_by_id(self, profile_id: str) -> bool:
         """
@@ -85,7 +87,7 @@ class LLMGateway:
             self.providers[profile_id] = provider_instance
             return True
         except Exception as e:
-            logger.error(f"Failed to lazy-load profile id={profile_id}: {e}")
+            logger.error("Failed to lazy-load profile id=%s: %s", profile_id, e)
             return False
 
     def _create_provider_from_profile(self, profile: Dict[str, Any]) -> Optional[BaseLLMProvider]:
@@ -167,7 +169,7 @@ class LLMGateway:
                     temperature=profile.get("temperature", 0.7)
                 )
         except Exception as e:
-            logger.error(f"Error creating provider instance for {profile.get('name')}: {e}")
+            logger.error("Error creating provider instance for %s: %s", profile.get('name'), e)
             return None
         return None
     
@@ -227,9 +229,15 @@ class LLMGateway:
         temperature: Optional[float],
         max_tokens: Optional[int]
     ) -> Dict[str, Any]:
-        """Execute chat with exponential backoff retry"""
+        """
+        Execute chat with intelligent retry based on error classification.
+        基于错误分类的智能重试执行聊天。
+
+        - Non-retryable errors (auth, invalid request) fail immediately
+        - Retryable errors (timeout, connection, server) use exponential backoff
+        """
         last_exception = None
-        
+
         for attempt in range(self.max_retries):
             try:
                 return await self._execute_chat(
@@ -237,11 +245,38 @@ class LLMGateway:
                 )
             except Exception as e:
                 last_exception = e
-                # Logging...
-                logger.error(f"LLM request error: {e}", exc_info=True)
+
+                # Classify the error
+                is_retryable, reason = classify_error(e)
+
+                if not is_retryable:
+                    # Non-retryable error - fail immediately
+                    logger.error(
+                        "LLM non-retryable error (reason=%s): %s",
+                        reason, e, exc_info=True
+                    )
+                    raise
+
+                # Retryable error - log and retry with backoff
+                logger.warning(
+                    "LLM retryable error (attempt=%d/%d, reason=%s): %s",
+                    attempt + 1, self.max_retries, reason, e
+                )
+
                 if attempt < self.max_retries - 1:
-                    await asyncio.sleep(self.retry_delays[attempt])
-        
+                    delay = get_retry_delay(
+                        attempt,
+                        self.retry_delays,
+                        self.max_retry_delay
+                    )
+                    logger.info("Retrying in %.1f seconds...", delay)
+                    await asyncio.sleep(delay)
+
+        # All retries exhausted
+        logger.error(
+            "LLM request failed after %d retries: %s",
+            self.max_retries, last_exception
+        )
         raise last_exception
     
     async def _execute_chat(
@@ -353,6 +388,27 @@ class LLMGateway:
         if profile:
             return profile.get("temperature", 0.7)
         return 0.7
+
+    def get_profile_for_agent(self, agent_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get full profile config for specific agent
+        获取特定 Agent 的完整配置
+        """
+        try:
+            profile_id = self.get_provider_for_agent(agent_name)
+            return llm_config_service.get_profile_by_id(profile_id)
+        except ValueError:
+            return None
+
+    def get_model_for_agent(self, agent_name: str) -> Optional[str]:
+        """
+        Get model name for specific agent
+        获取特定 Agent 使用的模型名称
+        """
+        profile = self.get_profile_for_agent(agent_name)
+        if profile:
+            return profile.get("model")
+        return None
 
 
 # Global gateway instance / 全局网关实例

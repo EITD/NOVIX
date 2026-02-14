@@ -1,18 +1,45 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   角色卡片视图 - 展示角色列表和角色编辑表单，支持增删改查操作
+ *   Character view for displaying character list and edit form with CRUD operations.
+ */
+
+import React, { useState, useEffect } from 'react';
 import { Card, Button, Input } from '../ui/core';
 import { Plus, User, X, Save } from 'lucide-react';
 
+/**
+ * 字符规范化函数 / Character normalization helper
+ * @param {*} value - 要规范化的值 / Value to normalize
+ * @returns {number} 规范化后的星级 / Normalized star rating
+ */
 const normalizeStars = (value) => {
   const parsed = parseInt(value, 10);
   if (Number.isNaN(parsed)) return 1;
   return Math.max(1, Math.min(parsed, 3));
 };
 
+/**
+ * 格式化别名函数 / Format aliases helper
+ * @param {*} value - 别名值 / Aliases value
+ * @returns {string} 格式化后的别名字符串 / Formatted aliases string
+ */
 const formatAliases = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean).join('，');
   return value || '';
 };
 
+/**
+ * 解析别名函数 / Parse aliases helper
+ * @param {string} value - 别名文本 / Aliases text
+ * @returns {Array} 解析后的别名数组 / Parsed aliases array
+ */
 const parseAliases = (value) => {
   return String(value || '')
     .split(/[,，;；\n]/)
@@ -21,8 +48,32 @@ const parseAliases = (value) => {
 };
 
 /**
- * CharacterView - 角色卡片视图
- * 负责角色列表与编辑表单展示。
+ * 角色卡片视图组件 - 展示和编辑角色卡片信息
+ *
+ * Component for displaying character cards and providing edit form interface.
+ * Manages character list display, sorting, and inline editing capabilities.
+ *
+ * @component
+ * @example
+ * return (
+ *   <CharacterView
+ *     characters={[{ id: '001', name: '张三', stars: 2 }]}
+ *     onEdit={handleEdit}
+ *     onSave={handleSave}
+ *     editing="ch001"
+ *     editingCharacter={editData}
+ *     onCancel={handleCancel}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {Array} [props.characters=[]] - 角色列表 / Character list
+ * @param {Function} [props.onEdit] - 编辑回调 / Edit callback
+ * @param {Function} [props.onSave] - 保存回调 / Save callback
+ * @param {string|null} [props.editing=null] - 编辑中的角色ID / Character ID being edited
+ * @param {Object|null} [props.editingCharacter=null] - 编辑中的角色数据 / Character data being edited
+ * @param {Function} [props.onCancel] - 取消编辑回调 / Cancel edit callback
+ * @returns {JSX.Element} 角色卡片视图 / Character view element
  */
 export function CharacterView({ characters, onEdit, onSave, editing, editingCharacter, onCancel }) {
   const activeEditing = editing || editingCharacter || null;

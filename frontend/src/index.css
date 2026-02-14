@@ -33,6 +33,10 @@
     --vscode-guide: #E2D7C4;
     /* Indentation Guide */
 
+    /* Text selection (avoid default blue) */
+    --vscode-selection-bg: #DCCFB7;
+    --vscode-selection-fg: #2B2A27;
+
     /* Misc */
     --radius-sm: 2px;
     /* Very subtle rounding */
@@ -59,15 +63,35 @@
     --vscode-focus-border: #2F6FDB;
     --vscode-guide: #E2D7C4;
 
+    --vscode-selection-bg: #DCCFB7;
+    --vscode-selection-fg: #2B2A27;
+
     --radius-sm: 2px;
     --radius-md: 4px;
   }
 
   body {
-    @apply bg-[var(--vscode-bg)] text-[var(--vscode-fg)] font-sans antialiased overflow-hidden selection:bg-[var(--vscode-focus-border)] selection:text-white;
+    @apply bg-[var(--vscode-bg)] text-[var(--vscode-fg)] font-sans antialiased overflow-hidden selection:bg-[var(--vscode-selection-bg)] selection:text-[var(--vscode-selection-fg)];
     font-size: 13px;
     /* Smaller standard font size */
     line-height: 1.4;
+  }
+
+  /* Ensure textarea/input also uses theme selection (Chrome/Firefox) */
+  .anti-theme textarea::selection,
+  .anti-theme input::selection,
+  .anti-theme pre::selection,
+  .anti-theme code::selection {
+    background: var(--vscode-selection-bg);
+    color: var(--vscode-selection-fg);
+  }
+
+  .anti-theme textarea::-moz-selection,
+  .anti-theme input::-moz-selection,
+  .anti-theme pre::-moz-selection,
+  .anti-theme code::-moz-selection {
+    background: var(--vscode-selection-bg);
+    color: var(--vscode-selection-fg);
   }
 
   /* Scrollbars - VS Code Style (Minimal overlay) */
@@ -176,6 +200,27 @@
 
   .custom-scrollbar:hover {
     scrollbar-color: rgba(0, 0, 0, 0.25) transparent;
+  }
+
+  /* 中央编辑区滚动条：稳定可见 */
+  .editor-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(43, 42, 39, 0.35) transparent;
+    scrollbar-gutter: stable;
+  }
+
+  .editor-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .editor-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgba(43, 42, 39, 0.25);
+    border-radius: 8px;
+  }
+
+  .editor-scrollbar:hover::-webkit-scrollbar-thumb {
+    background-color: rgba(43, 42, 39, 0.4);
   }
 
   /* 防止展开/收起时滚动条“抽搐”引发的布局抖动 */

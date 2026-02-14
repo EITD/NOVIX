@@ -1,11 +1,50 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   用户询问对话框 - 写作过程中的交互式问题确认与选项选择
+ *   User ask dialog for interactive confirmation and option selection during writing.
+ */
+
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from './ui/core';
 import { X } from 'lucide-react';
 
 /**
- * AskUserDialog - 用户确认弹窗
- * 用于写作过程中的问题确认与选项选择。
+ * 用户确认对话框 - 询问用户问题并收集选项选择
+ *
+ * Interactive dialog for asking users questions during writing process
+ * and collecting their choice from multiple options.
+ *
+ * @component
+ * @example
+ * return (
+ *   <AskUserDialog
+ *     isOpen={true}
+ *     title="情节方向"
+ *     message="应该采取哪个方向?"
+ *     options={[
+ *       { id: 'a', label: '选项A' },
+ *       { id: 'b', label: '选项B' }
+ *     ]}
+ *     onConfirm={handleConfirm}
+ *     onCancel={handleCancel}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {boolean} [props.isOpen=false] - 对话框是否打开 / Whether dialog is open
+ * @param {string} [props.title] - 对话框标题 / Dialog title
+ * @param {string} [props.message] - 对话框消息 / Dialog message
+ * @param {Array} [props.options=[]] - 选项列表 / List of options { id, label }
+ * @param {Function} [props.onConfirm] - 确认回调，传递选中选项 / Confirm callback with selected option
+ * @param {Function} [props.onCancel] - 取消回调 / Cancel callback
+ * @returns {JSX.Element} 用户询问对话框 / Ask user dialog element
  */
 export default function AskUserDialog({
   isOpen,

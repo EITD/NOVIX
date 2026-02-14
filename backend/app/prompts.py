@@ -1,5 +1,5 @@
 """
-Centralized prompt templates for NOVIX multi-agent novel writing system.
+Centralized prompt templates for WenShape multi-agent novel writing system.
 
 All LLM prompts used by the backend should live in this single file so they can
 be reviewed and tuned consistently.
@@ -43,6 +43,7 @@ DESIGN PRINCIPLES (行业最佳实践)
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -62,6 +63,72 @@ P1_MARKER = "【P1-应当】"  # SHOULD - 强烈建议
 P2_MARKER = "【P2-建议】"  # MAY - 可选建议
 
 
+# =============================================================================
+# Smart Truncation (智能截断)
+# =============================================================================
+_BOUNDARY_PATTERN = re.compile(r"[\n。！？.!?]")
+
+
+def _find_boundary(text: str, pos: int, direction: str) -> int:
+    """
+    Find natural boundary (sentence/paragraph end) near position.
+    在指定位置附近寻找自然边界（句末/段落末）。
+    """
+    search_range = 200
+    if direction == "end":
+        segment = text[max(0, pos - search_range):pos]
+        matches = list(_BOUNDARY_PATTERN.finditer(segment))
+        if matches:
+            return max(0, pos - search_range) + matches[-1].end()
+        return pos
+    else:
+        segment = text[pos:pos + search_range]
+        match = _BOUNDARY_PATTERN.search(segment)
+        if match:
+            return pos + match.end()
+        return pos
+
+
+def smart_truncate(
+    content: str,
+    max_chars: int = 15000,
+    head_ratio: float = 0.35,
+    tail_ratio: float = 0.35,
+) -> str:
+    """
+    Smart truncation preserving head and tail sections.
+    智能截断，保留首尾内容（符合 U 型注意力原则）。
+
+    Args:
+        content: Text to truncate
+        max_chars: Maximum character count
+        head_ratio: Ratio of max_chars for head section
+        tail_ratio: Ratio of max_chars for tail section
+
+    Returns:
+        Truncated content with preserved head/tail and compression marker
+    """
+    if not content:
+        return ""
+    content = str(content)
+    if len(content) <= max_chars:
+        return content
+
+    head_len = int(max_chars * head_ratio)
+    tail_len = int(max_chars * tail_ratio)
+
+    head_end = _find_boundary(content, head_len, "end")
+    tail_start = _find_boundary(content, len(content) - tail_len, "start")
+
+    if tail_start <= head_end:
+        return content[:max_chars]
+
+    head = content[:head_end].rstrip()
+    tail = content[tail_start:].lstrip()
+
+    return f"{head}\n\n[... 内容已压缩 / content compressed ...]\n\n{tail}"
+
+
 def base_agent_system_prompt(agent_name: str) -> str:
     """
     生成基础 Agent 系统提示词。
@@ -75,7 +142,7 @@ def base_agent_system_prompt(agent_name: str) -> str:
     return "\n".join(
         [
             f"### 角色定位",
-            f"你是 NOVIX 小说创作系统中的 {name} 智能体，专注于中文长篇小说创作领域。",
+            f"你是 WenShape 小说创作系统中的 {name} 智能体，专注于中文长篇小说创作领域。",
             "",
             "### 核心工作原则",
             f"{P0_MARKER} 严格遵循系统指令和用户指令，按要求的格式输出。",
@@ -93,18 +160,22 @@ def base_agent_system_prompt(agent_name: str) -> str:
 
 FANFICTION_CARD_REPAIR_HINT_STRICT_JSON = (
     f"{P0_MARKER} 输出格式：严格 JSON，无代码块包裹。\n"
-    f"{P1_MARKER} 描述内容：覆盖身份定位、外貌特征（如有）、性格特点、角色功能。\n"
-    f"{P1_MARKER} 描述长度：3-6 句完整中文，信息密度高，避免重复。\n"
+    f"{P1_MARKER} 描述内容：尽可能详细地覆盖身份定位、别名/称呼、外貌特征（如有）、性格与行为模式、能力与限制（如有）、关键关系与注意事项。\n"
+    f"{P1_MARKER} 描述长度：不设上限，优先信息密度与可用性；必须分段排版，避免一段文字堆在一起。\n"
+    f"{P1_MARKER} 排版建议：每段用“字段名：内容”开头（例如“身份定位：...”），段与段之间空一行。\n"
     f"{P0_MARKER} 原创性：改写表达，禁止连续12字以上与原文重合。"
 )
 
 FANFICTION_CARD_REPAIR_HINT_ENRICH_DESCRIPTION = (
     "描述要点清单：\n"
-    "1. 身份定位：角色在故事中的核心定位和作用\n"
-    "2. 外貌特征：如有明确描写，提取关键视觉特征\n"
-    "3. 性格特点：行为模式、价值观、典型反应\n"
-    "4. 角色功能：对剧情推进的作用、与主角的关系\n"
-    "要求：多句完整描述，具体可用于写作参考，避免空洞概括。"
+    "1. 身份定位：在作品/世界中的定位、阵营、职责、出场场景\n"
+    "2. 别名与称呼：常见别名/昵称/称呼差异（如有）\n"
+    "3. 外貌特征：可写作复现的关键视觉点（发色/瞳色/服饰/体态/标志物等，如有）\n"
+    "4. 性格与动机：行为模式、价值观、触发点、底线、典型反应\n"
+    "5. 能力与限制：能力/技能/资源/代价/禁忌（如有）\n"
+    "6. 关键关系：与重要人物/组织/地点的关系与冲突点\n"
+    "要求：尽量详细、可直接用于写作；若页面证据不足，请明确写“信息不足/不确定”。\n"
+    "排版：用多段落输出，每段以“字段名：”开头，段间空一行。"
 )
 
 EDITOR_REJECTED_CONCEPTS_INSTRUCTION = (
@@ -244,7 +315,7 @@ WRITER_SYSTEM_PROMPT = _u_shape(
     "\n".join(
         [
             "### 角色定位",
-            "你是 NOVIX 系统的 Writer（主笔），一位拥有丰富长篇小说创作经验的专业作家。",
+            "你是 WenShape 系统的 Writer（主笔），一位拥有丰富长篇小说创作经验的专业作家。",
             "核心职责：将【章节目标】与【证据包】转化为高质量的中文叙事正文。",
             "",
             "### 专业能力",
@@ -675,7 +746,7 @@ COMPRESSOR_SYSTEM_PROMPT = _u_shape(
     "\n".join(
         [
             "### 角色定位",
-            "你是 NOVIX 系统的「上下文压缩器」，一位精通信息提炼的专业编辑。",
+            "你是 WenShape 系统的「上下文压缩器」，一位精通信息提炼的专业编辑。",
             "核心职责：在保留关键信息的前提下，将长文本压缩至目标长度。",
             "",
             "### 专业能力",
@@ -871,7 +942,7 @@ EDITOR_SYSTEM_PROMPT = _u_shape(
     "\n".join(
         [
             "### 角色定位",
-            "你是 NOVIX 系统的 Editor（编辑），一位经验丰富的文字修订专家。",
+            "你是 WenShape 系统的 Editor（编辑），一位经验丰富的文字修订专家。",
             "核心职责：根据反馈对原稿进行精准修订，保持最小改动原则。",
             "",
             "### 专业能力",
@@ -924,6 +995,9 @@ EDITOR_SYSTEM_PROMPT = _u_shape(
     ),
 )
 
+EDITOR_REVISION_END_MARKER = "<<<REVISED_DRAFT_END>>>"
+EDITOR_PATCH_END_ANCHOR = "<<<WENSHAPE_END_OF_DRAFT>>>"
+
 
 def editor_revision_prompt(original_draft: str, user_feedback: str) -> PromptPair:
     """
@@ -965,6 +1039,8 @@ def editor_revision_prompt(original_draft: str, user_feedback: str) -> PromptPai
             "",
             f"{P0_MARKER} 仅输出修改后的完整正文（中文）",
             f"{P0_MARKER} 禁止添加解释、说明、修改记录",
+            f"{P0_MARKER} 输出末尾必须以单独一行结束标记收尾：{EDITOR_REVISION_END_MARKER}",
+            f"{P0_MARKER} 标记之后不得再输出任何字符（包括空格/换行以外的内容）",
         ]
     )
     user = "\n".join(
@@ -984,10 +1060,216 @@ def editor_revision_prompt(original_draft: str, user_feedback: str) -> PromptPai
             "<<<FEEDBACK_END>>>",
             "",
             "### 开始输出",
-            "请直接输出修改后的完整正文：",
+            "请直接输出修改后的完整正文，并在最后一行输出结束标记：",
+            f"{EDITOR_REVISION_END_MARKER}",
             "",
             "─" * 40,
             "【修订规则重复】",
+            critical,
+        ]
+    )
+    return PromptPair(system=EDITOR_SYSTEM_PROMPT, user=user)
+
+
+def editor_patch_ops_prompt(
+    excerpts: str,
+    user_feedback: str,
+) -> PromptPair:
+    """
+    编辑补丁模式：输出结构化 patch ops，而不是整稿重写。
+
+    设计目标：
+    - 让模型“只改需要改的地方”，降低幻觉与波及面
+    - 支持前端基于原文展示 diff，并允许逐块接受/撤销
+
+    输出 schema（JSON，不要 Markdown）：
+    {
+      "ops": [
+        {
+          "op": "replace" | "delete" | "insert_before" | "insert_after",
+          "before": "原文中将被替换/删除的精确片段（必须来自提供的摘录）",
+          "after": "替换后的新片段（replace 必填）",
+          "anchor": "用于插入的精确锚点片段（insert_* 必填）",
+          "content": "要插入的新内容（insert_* 必填）",
+          "reason": "一句话解释（可选，仅用于审阅）"
+        }
+      ]
+    }
+    """
+    critical = "\n".join(
+        [
+            "=" * 50,
+            "### 编辑任务（补丁模式）",
+            "=" * 50,
+            "",
+            "根据【用户反馈】对【原文摘录】提出最小化的局部补丁操作（patch ops）。",
+            "",
+            "### 核心约束",
+            "",
+            f"{P0_MARKER} 最小改动：只对必要句段做替换/插入/删除，其他内容保持原样。",
+            f"{P0_MARKER} 严禁整稿重写：禁止输出完整正文、禁止大范围改写、禁止无关润色。",
+            f"{P0_MARKER} 锚点必须精确：before/anchor 必须是【原文摘录】中出现的原句/片段（逐字匹配）。",
+            f"{P0_MARKER} 结尾追加：若用户反馈要求“续写/补全/扩写结尾”，优先使用 insert_after 在文末追加；可将 anchor 设置为特殊值 {EDITOR_PATCH_END_ANCHOR} 表示全文末尾。",
+            f"{P0_MARKER} 安全性：replace/delete 必须提供 before；insert_* 必须提供 anchor。",
+            f"{P0_MARKER} 中文输出：所有新增 content/after 必须中文。",
+            "",
+            "### 输出格式",
+            "",
+            f"{P0_MARKER} 仅输出 JSON（不要代码块/不要解释/不要多余文本）",
+            f"{P0_MARKER} JSON 顶层必须包含 ops 数组（允许为空，但尽量给出可执行补丁）",
+        ]
+    )
+
+    user = "\n".join(
+        [
+            critical,
+            "",
+            "### 原文摘录（仅供定位与补丁，不要尝试重写整章）",
+            "",
+            "<<<EXCERPTS_START>>>",
+            excerpts or "",
+            "<<<EXCERPTS_END>>>",
+            "",
+            "### 用户反馈（需执行的修改）",
+            "",
+            "<<<FEEDBACK_START>>>",
+            user_feedback or "",
+            "<<<FEEDBACK_END>>>",
+            "",
+            "### 开始输出",
+            "请直接输出 JSON：",
+            "",
+            "─" * 40,
+            "【规则重复】",
+            critical,
+        ]
+    )
+    return PromptPair(system=EDITOR_SYSTEM_PROMPT, user=user)
+
+
+def editor_selection_replace_prompt(
+    selection_text: str,
+    user_feedback: str,
+    prefix_hint: str = "",
+    suffix_hint: str = "",
+) -> PromptPair:
+    """
+    选区编辑替换模式：让模型只输出“替换后的选区文本”，由程序按 index 范围应用。
+
+    设计动机：
+    - 避免要求模型逐字复制超长 before/anchor（JSON patch 在长选区下极不可靠）
+    - 保证“只改选区”的边界可被程序强制执行
+    """
+    critical = "\n".join(
+        [
+            "=" * 50,
+            "### 编辑任务（选区替换模式）",
+            "=" * 50,
+            "",
+            "你将只对用户选中的【选区文本】进行修改，并输出“替换后的选区文本”。",
+            "",
+            "### 核心约束",
+            "",
+            f"{P0_MARKER} 修改边界：只能修改选区文本所覆盖的内容，不得引入选区之外的新段落结构要求。",
+            f"{P0_MARKER} 必须可见：输出必须与选区原文不同（删/改/扩写均可，但必须执行用户反馈）。",
+            f"{P0_MARKER} 保持上下文连贯：需与前后文（提示的前缀/后缀）语气、视角、称谓一致。",
+            f"{P0_MARKER} 中文输出：只输出中文正文。",
+            "",
+            "### 输出格式",
+            "",
+            f"{P0_MARKER} 仅输出“替换后的选区文本”（纯文本），不要输出 JSON、不要输出解释、不要加标题。",
+        ]
+    )
+
+    user = "\n".join(
+        [
+            critical,
+            "",
+            "### 前缀提示（用于连贯，不要复述）",
+            "",
+            "<<<PREFIX_START>>>",
+            prefix_hint or "",
+            "<<<PREFIX_END>>>",
+            "",
+            "### 选区文本（需要被替换）",
+            "",
+            "<<<SELECTION_START>>>",
+            selection_text or "",
+            "<<<SELECTION_END>>>",
+            "",
+            "### 后缀提示（用于连贯，不要复述）",
+            "",
+            "<<<SUFFIX_START>>>",
+            suffix_hint or "",
+            "<<<SUFFIX_END>>>",
+            "",
+            "### 用户反馈（需执行的修改）",
+            "",
+            "<<<FEEDBACK_START>>>",
+            user_feedback or "",
+            "<<<FEEDBACK_END>>>",
+            "",
+            "### 开始输出",
+            "请直接输出替换后的选区文本：",
+            "",
+            "─" * 40,
+            "【规则重复】",
+            critical,
+        ]
+    )
+    return PromptPair(system=EDITOR_SYSTEM_PROMPT, user=user)
+
+
+def editor_append_only_prompt(
+    tail_excerpt: str,
+    user_feedback: str,
+) -> PromptPair:
+    """
+    结尾续写模式：当补丁 ops 生成失败或为空时兜底。
+    仅生成“要追加到全文末尾的新内容”，不重复原文、不改动原文。
+    """
+    critical = "\n".join(
+        [
+            "=" * 50,
+            "### 编辑任务（结尾续写模式）",
+            "=" * 50,
+            "",
+            "你将为正文“只在末尾追加内容”，以满足【用户反馈】。",
+            "",
+            "### 核心约束",
+            "",
+            f"{P0_MARKER} 只追加：不得改动原文任何已有句子，不得重排原文，不得复述原文。",
+            f"{P0_MARKER} 只输出新增内容：不要输出完整正文、不要输出差异说明、不要输出 JSON。",
+            f"{P0_MARKER} 必须与结尾衔接自然：承接【结尾摘录】的最后一句，语气与叙事视角保持一致。",
+            f"{P0_MARKER} 中文输出：新增内容必须为中文正文。",
+            "",
+            "### 输出格式",
+            "",
+            f"{P0_MARKER} 直接输出要追加的新段落文本（纯文本），不要加标题、不要加引号、不要加解释。",
+        ]
+    )
+
+    user = "\n".join(
+        [
+            critical,
+            "",
+            "### 结尾摘录（用于对齐衔接，不要复述）",
+            "",
+            "<<<TAIL_START>>>",
+            tail_excerpt or "",
+            "<<<TAIL_END>>>",
+            "",
+            "### 用户反馈（续写目标）",
+            "",
+            "<<<FEEDBACK_START>>>",
+            user_feedback or "",
+            "<<<FEEDBACK_END>>>",
+            "",
+            "### 开始输出",
+            "请直接输出要追加的新段落：",
+            "",
+            "─" * 40,
+            "【规则重复】",
             critical,
         ]
     )
@@ -1002,7 +1284,7 @@ ARCHIVIST_SYSTEM_PROMPT = _u_shape(
     "\n".join(
         [
             "### 角色定位",
-            "你是 NOVIX 系统的 Archivist（资料管理员），一位精通信息结构化的知识工程师。",
+            "你是 WenShape 系统的 Archivist（资料管理员），一位精通信息结构化的知识工程师。",
             "核心职责：将文本内容转换为可落库的结构化信息。",
             "",
             "### 专业能力",
@@ -1198,7 +1480,7 @@ def archivist_style_profile_prompt(sample_text: str) -> PromptPair:
             "### 示例文本（仅用于提取技法，不要复述内容）",
             "",
             "<<<SAMPLE_TEXT_START>>>",
-            str(sample_text or "")[:20000],  # 上游已做采样/截断；此处再做一次上限保护
+            smart_truncate(str(sample_text or ""), max_chars=20000),
             "<<<SAMPLE_TEXT_END>>>",
             "",
             examples,
@@ -1243,20 +1525,37 @@ def archivist_fanfiction_card_prompt(title: str, content: str) -> PromptPair:
             "| Character | 人物、生物、有独立意志的个体 |",
             "| World | 地点、组织、物件、概念、规则、种族、体系等 |",
             "",
-            "### description 写作规范（3-6 句中文）",
+            "### description 写作规范（尽可能详细，优先可写作复现；仅排版更清晰，不改变信息）",
+            "",
+            f"{P0_MARKER} 排版要求：必须分段，段与段之间空一行；每段以“字段名：”开头（例如“身份定位：...”）。",
+            f"{P0_MARKER} 字段名只能使用以下之一：身份定位、别名称呼、外貌特征、性格动机、能力限制、关键关系、写作注意。",
             "",
             f"{P1_MARKER} Character 类型写作顺序：",
-            "  1. 身份与定位（在故事中的角色）",
-            "  2. 外貌特征（如有明确描写）",
-            "  3. 性格/行为模式",
-            "  4. 能力/限制（如有）",
-            "  5. 关键关系/戏份功能",
+            "  1. 身份与定位（在作品中的角色、阵营、职责）",
+            "  2. 别名/称呼/头衔（如有）",
+            "  3. 外貌特征（可复现的关键视觉点；如无证据则写“信息不足”）",
+            "  4. 性格/行为模式/动机（触发点、底线、习惯性反应）",
+            "  5. 能力/资源/限制（代价、禁忌、弱点；如有）",
+            "  6. 关键关系与冲突点（与谁因何相连/相斥）",
+            "  7. 写作注意事项（容易写错的点；必须避免的误设定）",
             "",
             f"{P1_MARKER} World 类型写作顺序：",
-            "  1. 定义与类别",
-            "  2. 关键规则/约束",
-            "  3. 代价/禁忌（如有）",
-            "  4. 常见使用方式/影响范围",
+            "  1. 定义与类别（是什么、用于什么）",
+            "  2. 关键规则/约束（必须遵守什么；边界是什么）",
+            "  3. 代价/禁忌/例外（如有）",
+            "  4. 典型要素清单（地理/组织结构/仪式/技术/名词体系等，按页面证据）",
+            "  5. 常见使用方式/影响范围（在叙事中怎么用、会造成什么后果）",
+            "  6. 写作注意事项（不可随意改动的设定点）",
+            "",
+            "### description 排版示例（仅示例排版，不要照抄内容）",
+            "",
+            "身份定位：……",
+            "",
+            "外貌特征：……",
+            "",
+            "性格动机：……",
+            "",
+            "写作注意：……",
             "",
             "### 原创性要求",
             "",
@@ -1267,7 +1566,7 @@ def archivist_fanfiction_card_prompt(title: str, content: str) -> PromptPair:
     )
     payload = {
         "title": str(title or "").strip(),
-        "content": str(content or "").strip()[:24000],
+        "content": str(content or "").strip()[:42000],
     }
     user = "\n".join(
         [
@@ -1334,7 +1633,7 @@ def archivist_fanfiction_card_repair_prompt(title: str, content: str, hint: str 
             "### 页面内容",
             "",
             "<<<PAGE_START>>>",
-            str(content or "")[:24000],
+            smart_truncate(str(content or ""), max_chars=24000),
             "<<<PAGE_END>>>",
             "",
             _json_only_rules("输出必须是 JSON 对象（不是数组）"),
@@ -1608,7 +1907,7 @@ def archivist_focus_characters_binding_prompt(
             "### 正文内容",
             "",
             "<<<DRAFT_START>>>",
-            str(final_draft or "")[:24000],
+            smart_truncate(str(final_draft or ""), max_chars=24000),
             "<<<DRAFT_END>>>",
             "",
             _yaml_only_rules(),
@@ -1708,7 +2007,7 @@ EXTRACTOR_SYSTEM_PROMPT = _u_shape(
     "\n".join(
         [
             "### 角色定位",
-            "你是 NOVIX 系统的 Extractor（设定抽取器），专注于从文本中提取写作可用的结构化设定。",
+            "你是 WenShape 系统的 Extractor（设定抽取器），专注于从文本中提取写作可用的结构化设定。",
             "",
             "### 专业能力",
             "- 擅长：实体识别、设定提炼、信息结构化、置信度评估",
@@ -1811,7 +2110,7 @@ def extractor_cards_prompt(title: str, content: str, max_cards: int) -> PromptPa
             "### 页面内容",
             "",
             "<<<PAGE_START>>>",
-            str(content or "")[:15000],
+            smart_truncate(str(content or ""), max_chars=15000),
             "<<<PAGE_END>>>",
             "",
             "### 输出 Schema",
@@ -1831,109 +2130,6 @@ def extractor_cards_prompt(title: str, content: str, max_cards: int) -> PromptPa
         ]
     )
     return PromptPair(system=EXTRACTOR_SYSTEM_PROMPT, user=user)
-
-
-BATCH_EXTRACTOR_SYSTEM_PROMPT = _u_shape(
-    "\n".join(
-        [
-            "### 角色定位",
-            "你是 NOVIX 系统的「批量设定抽取器」，专注于高效处理大量百科数据。",
-            "",
-            "### 核心任务",
-            "将原始百科数据转换为标准化设定卡数组（用于写作）",
-            "",
-            "=" * 50,
-            "### 输出规范",
-            "=" * 50,
-            "",
-            f"{P0_MARKER} 格式要求：",
-            "  - 仅输出 JSON 数组",
-            "  - 禁止 Markdown 格式、代码块、解释说明",
-            "",
-            f"{P0_MARKER} 每项必须包含：",
-            "  name, type, description, rationale, confidence",
-        ]
-    ),
-    "\n".join(
-        [
-            "### 处理策略",
-            "",
-            f"{P1_MARKER} description 规范：",
-            "  - 中文 2-5 句",
-            "  - 写作取向：设定画像 + 可用信息",
-            "  - 避免剧情复述",
-            "",
-            f"{P1_MARKER} 信息优先级：",
-            "  - 优先使用 info 中的明确字段（高置信）",
-            "  - 用 intro/desc 补充",
-            "",
-            "### 自检清单（内部执行）",
-            "",
-            "□ JSON 是否可解析？",
-            "□ 是否有空 name/type？",
-            "□ 是否捏造了输入没有的信息？",
-        ]
-    ),
-)
-
-
-def batch_extractor_user_prompt(json_payload: str) -> str:
-    """
-    生成批量提取器的用户提示词。
-
-    批量提取器直接使用 gateway，保持用户提示词精简且聚焦于 schema。
-    """
-    schema = '[{"name":"实体名","type":"Character|World","description":"设定描述","rationale":"来源引用","confidence":0.95}]'
-
-    critical = "\n".join(
-        [
-            "### 批量设定卡提取任务",
-            "",
-            "**输入格式**：JSON 数组，每项包含：info, desc, intro, source",
-            "",
-            "### 输出 Schema（严格 JSON 数组）",
-            "",
-            f"```json",
-            schema,
-            "```",
-            "",
-            "### 字段规范",
-            "",
-            f"{P0_MARKER} type：只能是 Character 或 World",
-            "",
-            f"{P1_MARKER} description（中文 2-5 句）：",
-            "  - 写作取向：身份/定义 → 特征/规则 → 作用/影响",
-            "  - 避免剧情复述",
-            "",
-            f"{P1_MARKER} rationale：",
-            "  - 写清来源（引用 source 标题）",
-            "  - 不写长解释",
-            "",
-            f"{P1_MARKER} confidence：",
-            "  - 0.0-1.0",
-            "  - 只在输入明确时给高分",
-            "",
-            _json_only_rules("输出必须是 JSON 数组"),
-        ]
-    )
-    return "\n".join(
-        [
-            critical,
-            "",
-            "### 输入数据",
-            "",
-            "<<<BATCH_DATA_START>>>",
-            str(json_payload or ""),
-            "<<<BATCH_DATA_END>>>",
-            "",
-            "### 开始输出",
-            "请直接输出 JSON 数组：",
-            "",
-            "─" * 40,
-            "【规范重复】",
-            critical,
-        ]
-    )
 
 
 # =============================================================================
@@ -1959,7 +2155,7 @@ GUIDING_AGENT_IDENTITIES = {
 }
 
 GUIDING_DEFAULT_AGENT_IDENTITY_TEMPLATE = (
-    "你是 NOVIX 系统的 {agent_name} 智能体，专注于中文长篇小说创作支持。"
+    "你是 WenShape 系统的 {agent_name} 智能体，专注于中文长篇小说创作支持。"
 )
 
 
@@ -2042,7 +2238,7 @@ def text_chunk_rerank_prompt(query: str, payload: List[Dict[str, str]]) -> Promp
     critical = "\n".join(
         [
             "### 角色定位",
-            "你是 NOVIX 系统的「检索重排序器」，负责评估文本片段与查询的相关性。",
+            "你是 WenShape 系统的「检索重排序器」，负责评估文本片段与查询的相关性。",
             "",
             "### 核心任务",
             "根据【目标 query】对【候选片段】进行相关性评分",

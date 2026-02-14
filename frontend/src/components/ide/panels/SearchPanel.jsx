@@ -1,3 +1,15 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   全局搜索面板 - 在整个项目中搜索相关证据、引用和卡片信息
+ *   Global search panel for searching evidence, citations, and card information across projects.
+ */
+
 import React, { useState } from 'react';
 import { useIDE } from '../../../context/IDEContext';
 import { Search, Loader2 } from 'lucide-react';
@@ -5,8 +17,18 @@ import { Input } from '../../ui/core';
 import { evidenceAPI } from '../../../api';
 
 /**
- * SearchPanel - 全局搜索面板
- * 负责搜索输入与结果占位展示。
+ * 全局搜索面板 - 跨项目文本搜索与结果展示
+ *
+ * IDE search panel for querying evidence, facts, and references across the project.
+ * Displays search results with relevant snippets and metadata.
+ *
+ * @component
+ * @example
+ * return (
+ *   <SearchPanel />
+ * )
+ *
+ * @returns {JSX.Element} 全局搜索面板 / Search panel element
  */
 export default function SearchPanel() {
     const [query, setQuery] = useState('');

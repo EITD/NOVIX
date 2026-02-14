@@ -1,14 +1,37 @@
 /**
- * CardsPanel - 设定卡片面板
- * 仅做视觉一致性优化，不改变数据与交互逻辑。
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   卡片面板 - 管理角色卡、世界观卡、风格卡，支持创建、编辑、删除和星级管理
+ *   Cards panel for managing character, worldview, and style cards with CRUD operations.
+ */
+
+/**
+ * 设定卡片管理面板 - 角色、世界观和风格卡片的集中管理界面
+ *
+ * IDE panel for managing story setting cards (characters, worldview, style).
+ * Provides CRUD operations, filtering, and integration with wiki import and card editing dialogs.
+ * Maintains visual consistency without altering core business logic.
+ *
+ * @component
+ * @example
+ * return (
+ *   <CardsPanel />
+ * )
+ *
+ * @returns {JSX.Element} 卡片面板 / Cards panel element
  */
 import { useEffect, useMemo, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { useIDE } from '../../../context/IDEContext';
 import { useParams } from 'react-router-dom';
 import { cardsAPI } from '../../../api';
 import { Plus, RefreshCw, User, Globe, Trash2, FileText, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '../../ui/core';
+import logger from '../../../utils/logger';
 
 const normalizeStars = (value) => {
   const parsed = parseInt(value, 10);
@@ -45,59 +68,38 @@ export default function CardsPanel() {
     setLoading(true);
     try {
       const [charsResp, worldsResp, styleResp] = await Promise.allSettled([
-        cardsAPI.listCharacters(projectId),
-        cardsAPI.listWorld(projectId),
-        cardsAPI.getStyle(projectId)
+        cardsAPI.listCharactersIndex(projectId),
+        cardsAPI.listWorldIndex(projectId),
+        cardsAPI.getStyle(projectId),
       ]);
 
       const chars = charsResp.status === 'fulfilled' ? (Array.isArray(charsResp.value.data) ? charsResp.value.data : []) : [];
       const worlds = worldsResp.status === 'fulfilled' ? (Array.isArray(worldsResp.value.data) ? worldsResp.value.data : []) : [];
       const style = styleResp.status === 'fulfilled' ? styleResp.value.data : null;
 
-      const characterDetails = await Promise.allSettled(
-        chars.map((name) => cardsAPI.getCharacter(projectId, name))
-      );
-      const worldDetails = await Promise.allSettled(
-        worlds.map((name) => cardsAPI.getWorld(projectId, name))
-      );
-
-      const characterMap = new Map();
-      for (const result of characterDetails) {
-        if (result.status === 'fulfilled') {
-          const card = result.value?.data;
-          if (card?.name) {
-            characterMap.set(card.name, card);
-          }
-        }
-      }
-
-      const worldMap = new Map();
-      for (const result of worldDetails) {
-        if (result.status === 'fulfilled') {
-          const card = result.value?.data;
-          if (card?.name) {
-            worldMap.set(card.name, card);
-          }
-        }
-      }
-
       const combined = [
-        ...chars.map(name => ({
-          name,
-          type: 'character',
-          stars: normalizeStars(characterMap.get(name)?.stars)
-        })),
-        ...worlds.map(name => ({
-          name,
-          type: 'world',
-          stars: normalizeStars(worldMap.get(name)?.stars)
-        }))
+        ...chars
+          .filter((card) => card?.name)
+          .map((card) => ({
+            id: `character:${card.name}`,
+            name: card.name,
+            type: 'character',
+            stars: normalizeStars(card.stars),
+          })),
+        ...worlds
+          .filter((card) => card?.name)
+          .map((card) => ({
+            id: `world:${card.name}`,
+            name: card.name,
+            type: 'world',
+            stars: normalizeStars(card.stars),
+          })),
       ];
 
       setEntities(combined);
       setStyleCard(style || { style: '' });
     } catch (e) {
-      console.error('Failed to load cards', e);
+      logger.error('Failed to load cards', e);
     } finally {
       setLoading(false);
     }
@@ -129,7 +131,7 @@ export default function CardsPanel() {
         dispatch({ type: 'CLEAR_ACTIVE_DOCUMENT' });
       }
     } catch (error) {
-      console.error('Failed to delete card:', error);
+      logger.error('Failed to delete card:', error);
       alert('删除失败：' + (error.response?.data?.detail || error.message));
     }
   };
@@ -138,7 +140,7 @@ export default function CardsPanel() {
     try {
       await cardsAPI.updateStyle(projectId, { style: styleCard.style || '' });
     } catch (error) {
-      console.error('Failed to save style card:', error);
+      logger.error('Failed to save style card:', error);
     }
   };
 
@@ -186,8 +188,6 @@ export default function CardsPanel() {
     { id: 'style', label: '文风', icon: FileText }
   ];
 
-  const currentIndex = typeOptions.findIndex(opt => opt.id === typeFilter);
-
   return (
     <div className="anti-theme h-full flex flex-col bg-[var(--vscode-bg)] text-[var(--vscode-fg)]">
       <div className="p-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
@@ -210,18 +210,8 @@ export default function CardsPanel() {
         </div>
 
         <div className="px-1 py-1">
-          <div className="relative bg-[var(--vscode-bg)] rounded-[6px] p-0.5 border border-[var(--vscode-sidebar-border)]">
-            <motion.div
-              className="absolute top-0.5 bottom-0.5 bg-[var(--vscode-list-active)] rounded-[4px]"
-              initial={false}
-              animate={{
-                left: `calc(${currentIndex * 33.333}% + 2px)`,
-                width: 'calc(33.333% - 4px)'
-              }}
-              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-            />
-
-            <div className="relative flex">
+          <div className="bg-[var(--vscode-bg)] rounded-[6px] p-0.5 border border-[var(--vscode-sidebar-border)]">
+            <div className="flex">
               {typeOptions.map((opt) => {
                 const Icon = opt.icon;
                 const isActive = typeFilter === opt.id;
@@ -230,8 +220,10 @@ export default function CardsPanel() {
                     key={opt.id}
                     onClick={() => setTypeFilter(opt.id)}
                     className={cn(
-                      'flex-1 relative z-10 py-1 px-2 text-[10px] font-medium rounded-[4px] transition-none',
-                      isActive ? 'text-[var(--vscode-list-active-fg)]' : 'text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]'
+                      'flex-1 py-1 px-2 text-[10px] font-medium rounded-[4px] transition-none',
+                      isActive
+                        ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]'
+                        : 'text-[var(--vscode-fg-subtle)] hover:bg-[var(--vscode-list-hover)] hover:text-[var(--vscode-fg)]'
                     )}
                   >
                     <div className="flex items-center justify-center gap-1">
@@ -312,44 +304,38 @@ export default function CardsPanel() {
             )}
 
             <div className="space-y-1">
-              <AnimatePresence>
-                {filteredEntities.map((entity, idx) => (
-                  <motion.div
-                    key={entity.id || entity.name || idx}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.2, delay: idx * 0.05 }}
-                    onClick={() => dispatch({
-                      type: 'SET_ACTIVE_DOCUMENT',
-                      payload: { type: entity.type || 'card', id: entity.name, data: entity }
-                    })}
-                    className={cn(
-                      'flex items-start gap-2 px-2 py-2 rounded-[6px] cursor-pointer hover:bg-[var(--vscode-list-hover)] group border border-transparent transition-none',
-                      state.activeDocument?.id === entity.name && state.activeDocument?.type === (entity.type || 'card')
-                        ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]'
-                        : ''
-                    )}
+              {filteredEntities.map((entity, idx) => (
+                <div
+                  key={entity.id || entity.name || idx}
+                  onClick={() => dispatch({
+                    type: 'SET_ACTIVE_DOCUMENT',
+                    payload: { type: entity.type || 'card', id: entity.name, data: entity }
+                  })}
+                  className={cn(
+                    'flex items-start gap-2 px-2 py-2 rounded-[6px] cursor-pointer hover:bg-[var(--vscode-list-hover)] group border border-transparent transition-none',
+                    state.activeDocument?.id === entity.name && state.activeDocument?.type === (entity.type || 'card')
+                      ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]'
+                      : ''
+                  )}
+                >
+                  <div className="mt-0.5 opacity-60">
+                    {getCardIcon(entity.type)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-medium leading-none mb-1">{entity.name}</div>
+                      <div className="text-[10px] opacity-70">{`${normalizeStars(entity.stars)}星`}</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => handleDeleteCard(entity, e)}
+                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded-[4px] text-[var(--vscode-fg-subtle)] hover:text-red-500 transition-none"
+                    title="删除卡片"
                   >
-                    <div className="mt-0.5 opacity-60">
-                      {getCardIcon(entity.type)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-medium leading-none mb-1">{entity.name}</div>
-                        <div className="text-[10px] opacity-70">{`${normalizeStars(entity.stars)}星`}</div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={(e) => handleDeleteCard(entity, e)}
-                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded-[4px] text-[var(--vscode-fg-subtle)] hover:text-red-500 transition-none"
-                      title="删除卡片"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
             </div>
           </>
         )}

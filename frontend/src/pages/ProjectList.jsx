@@ -1,3 +1,11 @@
+/**
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ */
+
 import { useState } from 'react';
 import useSWR, { mutate } from 'swr';
 import { projectsAPI } from '../api';
@@ -7,6 +15,10 @@ import { useNavigate } from 'react-router-dom';
 
 const fetcher = (fn) => fn().then((res) => res.data);
 
+/**
+ * ProjectCardSkeleton - 作品卡片加载骨架屏
+ * 显示加载中的卡片占位符，改善用户加载体验。
+ */
 const ProjectCardSkeleton = () => (
   <div className="bg-[var(--vscode-bg)] border border-[var(--vscode-sidebar-border)] rounded-[6px] p-6 animate-pulse">
     <div className="h-6 w-3/4 bg-[var(--vscode-list-hover)] rounded mb-2" />
@@ -18,9 +30,17 @@ const ProjectCardSkeleton = () => (
 
 /**
  * ProjectList - 作品列表页
- * 展示作品列表并提供新建入口，不改变既有交互与数据逻辑。
+ *
+ * 展示用户的所有小说项目列表，支持创建新项目和项目管理。
+ * 使用 SWR 进行数据获取和缓存，提供骨架屏加载体验和空状态处理。
+ *
+ * @component
+ * @param {Function} [onSelectProject] - 选择项目后的回调，若提供则不导航
+ * @returns {JSX.Element} 项目列表页面
+ *
+ * @example
+ * <ProjectList onSelectProject={(project) => handleSelect(project)} />
  */
-
 function ProjectList({ onSelectProject }) {
   const navigate = useNavigate();
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -37,7 +57,9 @@ function ProjectList({ onSelectProject }) {
     e.preventDefault();
     setLoading(true);
     try {
+      // 调用 API 创建新项目
       const response = await projectsAPI.create(newProject);
+      // 更新项目列表缓存
       mutate('projects-list');
       setShowCreateForm(false);
       setNewProject({ name: '', description: '' });
@@ -72,7 +94,9 @@ function ProjectList({ onSelectProject }) {
         </div>
       </div>
 
-      {/* Create Form */}
+      {/* ========================================================================
+          创建表单区域 / Create Form Section
+          ======================================================================== */}
       {showCreateForm && (
         <div className="mb-6">
           <Card className="ws-paper">
@@ -119,9 +143,11 @@ function ProjectList({ onSelectProject }) {
         </div>
       )}
 
-      {/* Projects Grid */}
+      {/* ========================================================================
+          项目网格区域 / Projects Grid Section
+          ======================================================================== */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Skeleton Loading */}
+        {/* 加载骨架屏 - Skeleton Loading */}
         {isLoading && (
           <>
             <ProjectCardSkeleton />
@@ -130,7 +156,7 @@ function ProjectList({ onSelectProject }) {
           </>
         )}
 
-        {/* Empty State */}
+        {/* 空状态 - Empty State */}
         {!isLoading && projects.length === 0 && (
           <div className="col-span-full flex flex-col items-center justify-center py-24 border border-dashed border-[var(--vscode-sidebar-border)] rounded-[6px] bg-[var(--vscode-bg)]">
             <Book className="h-12 w-12 text-ink-400 mb-4 opacity-50" />
@@ -141,7 +167,7 @@ function ProjectList({ onSelectProject }) {
           </div>
         )}
 
-        {/* Project Cards */}
+        {/* 项目卡片列表 - Project Cards */}
         {!isLoading && projects.map((project) => (
             <div key={project.id}>
               <Card

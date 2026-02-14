@@ -108,6 +108,13 @@ class CardStorage(BaseStorage):
             return []
         return [f.stem for f in cards_dir.glob("*.yaml")]
 
+    async def delete_world_card(self, project_id: str, card_name: str) -> bool:
+        file_path = self.get_project_path(project_id) / "cards" / "world" / f"{card_name}.yaml"
+        if file_path.exists():
+            file_path.unlink()
+            return True
+        return False
+
     async def get_style_card(self, project_id: str) -> Optional[StyleCard]:
         file_path = self.get_project_path(project_id) / "cards" / "style.yaml"
         if not file_path.exists():
@@ -254,5 +261,3 @@ class CardStorage(BaseStorage):
 
         return {"style": "\n".join([item for item in parts if item]).strip()}
 
-
-cards_storage = CardStorage()

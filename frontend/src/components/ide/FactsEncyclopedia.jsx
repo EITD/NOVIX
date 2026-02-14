@@ -4,10 +4,11 @@
  */
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { ChevronDown, ChevronRight, Pencil, Sparkles, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { bindingsAPI, canonAPI, draftsAPI, volumesAPI } from '../../api';
 import { Button, Card, Input, cn } from '../ui/core';
+import logger from '../../utils/logger';
 
 
 const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
@@ -19,6 +20,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
   const [expandedFacts, setExpandedFacts] = useState(new Set());
   const [editingFact, setEditingFact] = useState(null);
   const [editingSummary, setEditingSummary] = useState(null);
+  const [creatingFact, setCreatingFact] = useState(null);
 
   const { data: factsTree = { volumes: [] }, isLoading, mutate } = useSWR(
     projectId ? [projectId, 'facts-tree'] : null,
@@ -99,7 +101,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
       await canonAPI.delete(projectId, factId);
       mutate();
     } catch (error) {
-      console.error(error);
+      logger.error(error);
       alert('删除失败，请稍后重试。');
     }
   };
@@ -116,9 +118,44 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
       setEditingFact(null);
       mutate();
     } catch (error) {
-      console.error(error);
+      logger.error(error);
       alert('保存失败，请稍后重试。');
     }
+  };
+
+  const handleCreateFact = async () => {
+    if (!creatingFact) return;
+
+    const statement = (creatingFact.content || creatingFact.statement || '').trim();
+    if (!statement) {
+      alert('请输入事实内容。');
+      return;
+    }
+
+    try {
+      const payload = {
+        title: creatingFact.title || undefined,
+        content: creatingFact.content || statement,
+        statement,
+        source: creatingFact.chapterId,
+        introduced_in: creatingFact.chapterId,
+        confidence: 1.0,
+      };
+      await canonAPI.createManual(projectId, payload);
+      setCreatingFact(null);
+      mutate();
+    } catch (error) {
+      logger.error(error);
+      alert('新增失败，请稍后重试。');
+    }
+  };
+
+  const openCreateFactDialog = (chapterId) => {
+    setCreatingFact({
+      chapterId,
+      title: '',
+      content: '',
+    });
   };
 
   const handleSaveSummary = async () => {
@@ -170,7 +207,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
       setEditingSummary(null);
       mutate();
     } catch (error) {
-      console.error(error);
+      logger.error(error);
       alert('保存失败，请稍后重试。');
     }
   };
@@ -221,6 +258,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
                 onToggleFact={toggleFact}
                 onEditSummary={(payload) => setEditingSummary(payload)}
                 onEditFact={(fact) => setEditingFact(fact)}
+                onAddFact={openCreateFactDialog}
                 onDeleteFact={handleDeleteFact}
                 onFactSelect={onFactSelect}
               />
@@ -235,6 +273,14 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
         onChange={setEditingFact}
         onClose={() => setEditingFact(null)}
         onSave={handleSaveFact}
+      />
+
+      <CreateFactDialog
+        open={Boolean(creatingFact)}
+        fact={creatingFact}
+        onChange={setCreatingFact}
+        onClose={() => setCreatingFact(null)}
+        onSave={handleCreateFact}
       />
 
       <EditSummaryDialog
@@ -259,6 +305,7 @@ function VolumeSection({
   onToggleFact,
   onEditSummary,
   onEditFact,
+  onAddFact,
   onDeleteFact,
   onFactSelect,
 }) {
@@ -328,6 +375,7 @@ function VolumeSection({
             onToggleSummary={onToggleSummary}
             onEditSummary={onEditSummary}
             onEditFact={onEditFact}
+            onAddFact={onAddFact}
             onDeleteFact={onDeleteFact}
             onToggleFact={onToggleFact}
             onFactSelect={onFactSelect}
@@ -349,6 +397,7 @@ function ChapterBlock({
   onToggleSummary,
   onEditSummary,
   onEditFact,
+  onAddFact,
   onDeleteFact,
   onToggleFact,
   onFactSelect,
@@ -370,8 +419,16 @@ function ChapterBlock({
 
   return (
     <div className="border border-[var(--vscode-sidebar-border)] rounded-[4px] bg-[var(--vscode-bg)] overflow-hidden">
-      <button
+      <div
         onClick={() => onToggleChapter(chapter.id)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggleChapter(chapter.id);
+          }
+        }}
+        role="button"
+        tabIndex={0}
         className={cn(
           'w-full flex items-center gap-2 px-2 py-1.5 text-left transition-none',
           'hover:bg-[var(--vscode-list-hover)]'
@@ -383,8 +440,23 @@ function ChapterBlock({
 
         <span className="text-[10px] font-mono text-[var(--vscode-fg-subtle)]">{chapter.id}</span>
         <span className="text-[12px] text-[var(--vscode-fg)] truncate flex-1">{chapter.title || '未命名章节'}</span>
-        <span className="text-[10px] text-[var(--vscode-fg-subtle)] tabular-nums">{facts.length}</span>
-      </button>
+
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className="p-1 rounded-[4px] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-none"
+            title="新增事实"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddFact?.(chapter.id);
+              if (!isExpanded) onToggleChapter(chapter.id);
+            }}
+          >
+            <Plus size={14} />
+          </button>
+          <span className="text-[10px] text-[var(--vscode-fg-subtle)] tabular-nums">{facts.length}</span>
+        </div>
+      </div>
 
       {isExpanded && (
         <div className="border-t border-[var(--vscode-sidebar-border)] bg-[var(--vscode-bg)] overflow-hidden">
@@ -574,6 +646,63 @@ function EditFactDialog({ open, fact, onChange, onClose, onSave }) {
             className="h-8 px-3 text-xs rounded-[4px] bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 shadow-none"
           >
             保存
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreateFactDialog({ open, fact, onChange, onClose, onSave }) {
+  if (!open || !fact) return null;
+
+  return (
+    <div className="anti-theme fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-4">
+      <div className="w-full max-w-md border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-bg)] text-[var(--vscode-fg)] rounded-[6px] shadow-none overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)] flex items-center justify-between">
+          <div className="text-sm font-bold text-[var(--vscode-fg)]">新增事实</div>
+          <button
+            className="p-2 rounded-[6px] hover:bg-[var(--vscode-list-hover)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] transition-none"
+            onClick={onClose}
+            title="关闭"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="text-[11px] text-[var(--vscode-fg-subtle)]">
+            章节：<span className="font-mono">{fact.chapterId}</span>
+          </div>
+
+          <Input
+            placeholder="事实标题（可选）"
+            value={fact.title || ''}
+            onChange={(e) => onChange({ ...fact, title: e.target.value })}
+            className="h-10 text-sm bg-[var(--vscode-input-bg)] border-[var(--vscode-input-border)] text-[var(--vscode-fg)] focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-[var(--vscode-focus-border)]"
+          />
+
+          <textarea
+            placeholder="事实内容（必填）"
+            value={fact.content || ''}
+            onChange={(e) => onChange({ ...fact, content: e.target.value })}
+            className="w-full min-h-[140px] text-sm bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] rounded-[6px] px-3 py-2 text-[var(--vscode-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none"
+          />
+        </div>
+
+        <div className="px-4 py-3 border-t border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)] flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            onClick={onClose}
+            className="h-8 px-3 text-xs rounded-[4px] border border-[var(--vscode-input-border)] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] shadow-none"
+          >
+            取消
+          </Button>
+          <Button
+            onClick={onSave}
+            className="h-8 px-3 text-xs rounded-[4px] bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 shadow-none"
+          >
+            新增
           </Button>
         </div>
       </div>

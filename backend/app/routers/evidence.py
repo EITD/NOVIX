@@ -1,5 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Evidence search router.
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  证据搜索路由 - 提供跨事实、摘要、卡片的证据检索 API，支持类型配额和语义重排。
+  Evidence search router - Provides evidence retrieval API with type quotas, seed entity ranking, and optional semantic reranking.
 """
 
 from typing import Any, Dict, List, Optional

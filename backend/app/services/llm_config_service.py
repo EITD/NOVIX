@@ -1,3 +1,15 @@
+# -*- coding: utf-8 -*-
+"""
+文枢 WenShape - 深度上下文感知的智能体小说创作系统
+WenShape - Deep Context-Aware Agent-Based Novel Writing System
+
+Copyright © 2025-2026 WenShape Team
+License: PolyForm Noncommercial License 1.0.0
+
+模块说明 / Module Description:
+  LLM 配置服务 - 管理 LLM API 配置文件和智能体分配，支持多提供商，支持从 .env 迁移。
+  LLM configuration service - Manages LLM API profiles and agent-to-provider assignments with legacy .env migration support.
+"""
 
 import json
 import uuid
@@ -11,23 +23,63 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class LLMConfigService:
-    def __init__(self):
-        self.data_dir = self._get_data_dir()
+    """
+    LLM 配置管理服务 - 持久化存储 API 配置和智能体分配。
+
+    Manages LLM API profiles (OpenAI, Anthropic, DeepSeek, Custom) and agent assignments.
+    Supports multiple profiles with per-provider settings.
+    Handles legacy .env configuration migration for backward compatibility.
+
+    Attributes:
+        data_dir: 数据目录路径 / Path to persistent data directory
+        profiles_path: 配置文件路径 / Path to llm_profiles.json
+        assignments_path: 分配文件路径 / Path to agent_assignments.json
+    """
+
+    def __init__(self, data_dir: Optional[str] = None) -> None:
+        self.data_dir = self._resolve_data_dir(data_dir)
         self.profiles_path = self.data_dir / "llm_profiles.json"
         self.assignments_path = self.data_dir / "agent_assignments.json"
         self._ensure_data_dir()
         self._migrate_legacy_config()
 
-    def _get_data_dir(self) -> Path:
-        """Get the persistent data directory."""
-        if getattr(sys, 'frozen', False):
-             # Frozen: data dir is next to EXE/data
-             return Path(sys.executable).parent / "data"
-        else:
-             # Dev: backend/data (or ../data relative to this file?)
-             # Assuming standard structure: backend/app/services/ -> backend/data
-             return Path(__file__).resolve().parents[2] / "data"
+    def _resolve_data_dir(self, data_dir: Optional[str]) -> Path:
+        """Resolve data directory with backward-compatible fallback."""
+        if data_dir:
+            resolved = Path(str(data_dir)).expanduser()
+            return resolved if resolved.is_absolute() else (Path.cwd() / resolved).resolve()
+
+        primary = self._default_data_dir()
+        legacy = self._legacy_data_dir()
+
+        primary_profiles = primary / "llm_profiles.json"
+        primary_assignments = primary / "agent_assignments.json"
+        legacy_profiles = legacy / "llm_profiles.json"
+        legacy_assignments = legacy / "agent_assignments.json"
+
+        if primary_profiles.exists() or primary_assignments.exists():
+            return primary
+        if legacy_profiles.exists() or legacy_assignments.exists():
+            return legacy
+        return primary
+
+    def _default_data_dir(self) -> Path:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).parent / "data"
+
+        raw = getattr(getattr(app_config, "settings", None), "data_dir", None) or "../data"
+        candidate = Path(str(raw)).expanduser()
+        if candidate.is_absolute():
+            return candidate
+
+        backend_root = Path(__file__).resolve().parents[2]
+        return (backend_root / candidate).resolve()
+
+    def _legacy_data_dir(self) -> Path:
+        """Legacy location used by early versions (backend/data)."""
+        return (Path(__file__).resolve().parents[2] / "data").resolve()
 
     def _ensure_data_dir(self):
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -39,42 +91,154 @@ class LLMConfigService:
             with open(path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            logger.error(f"Error loading {path}: {e}")
+            logger.error("Error loading %s: %s", path, e)
             return default
 
     def _save_json(self, path: Path, data: Any):
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        try:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            try:
+                os.replace(tmp_path, path)
+            except (PermissionError, OSError) as exc:
+                # Windows can deny replace when destination is temporarily locked (e.g. AV/indexers).
+                # Best-effort retry, then fall back to direct write to avoid breaking startup flows.
+                winerror = getattr(exc, "winerror", None)
+                is_windows_lock = isinstance(exc, PermissionError) or winerror in {5, 32}
+                if not is_windows_lock:
+                    raise
+
+                last_exc: Exception = exc
+                for attempt in range(4):
+                    try:
+                        import time
+                        time.sleep(0.05 * (attempt + 1))
+                        os.replace(tmp_path, path)
+                        break
+                    except (PermissionError, OSError) as retry_exc:
+                        last_exc = retry_exc
+                else:
+                    logger.warning("Atomic replace failed, falling back to direct write: %s", last_exc)
+                    with open(path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+        finally:
+            try:
+                if tmp_path.exists() and tmp_path != path:
+                    tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def get_profiles(self) -> List[Dict[str, Any]]:
-        return self._load_json(self.profiles_path, [])
+        """
+        获取所有 LLM 配置文件。
+
+        Get all saved LLM API profiles.
+
+        Returns:
+            配置文件列表 / List of profile dictionaries.
+        """
+        profiles = self._load_json(self.profiles_path, [])
+        if not isinstance(profiles, list):
+            profiles = []
+
+        cleaned: List[Dict[str, Any]] = []
+        now_ts = int(datetime.now().timestamp())
+        for item in profiles:
+            if not isinstance(item, dict):
+                continue
+
+            profile = dict(item)
+            profile_id = str(profile.get("id") or "").strip()
+            if not profile_id:
+                profile_id = str(uuid.uuid4())
+                profile["id"] = profile_id
+
+            provider = str(profile.get("provider") or "").strip().lower()
+            if provider:
+                profile["provider"] = provider
+            else:
+                profile["provider"] = "custom"
+
+            name = str(profile.get("name") or "").strip()
+            if not name:
+                profile["name"] = f"{provider or 'custom'}:{profile_id[:8]}"
+
+            if "created_at" not in profile:
+                profile["created_at"] = now_ts
+
+            cleaned.append(profile)
+
+        return cleaned
 
     def get_assignments(self) -> Dict[str, str]:
-        defaults = {
-            "archivist": "",
-            "writer": "",
-            "editor": ""
-        }
-        data = self._load_json(self.assignments_path, defaults)
-        return {key: data.get(key, "") for key in defaults.keys()}
+        """
+        获取智能体到 LLM 配置的分配关系。
+
+        Get current agent-to-profile assignments.
+
+        Returns:
+            分配字典 (agent_name -> profile_id) / Assignment mapping.
+        """
+        allowed = {"archivist", "writer", "editor"}
+        assignments = self._load_json(self.assignments_path, {})
+        if not isinstance(assignments, dict):
+            assignments = {}
+
+        profile_ids = {p.get("id") for p in self.get_profiles() if isinstance(p, dict) and p.get("id")}
+        cleaned: Dict[str, str] = {}
+        for agent in allowed:
+            raw = str(assignments.get(agent) or "").strip()
+            if raw and raw not in profile_ids:
+                raw = ""
+            cleaned[agent] = raw
+
+        return cleaned
 
     def save_profile(self, profile: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        保存或更新 LLM 配置文件。
+
+        Save a new profile or update an existing one.
+
+        Args:
+            profile: 配置文件数据 / Profile dictionary. If no 'id', generates new UUID.
+
+        Returns:
+            保存后的配置文件（包含 id 和 created_at） / Profile with id and timestamp.
+        """
         profiles = self.get_profiles()
-        
-        # If new profile
-        if "id" not in profile or not profile["id"]:
-            profile["id"] = str(uuid.uuid4())
-            profile["created_at"] = int(datetime.now().timestamp())
-            profiles.append(profile)
-        else:
-            # Update existing
-            for i, p in enumerate(profiles):
-                if p["id"] == profile["id"]:
-                    profiles[i] = {**p, **profile} # Merge updates
-                    break
-        
+        if not isinstance(profiles, list):
+            profiles = []
+
+        incoming = dict(profile or {})
+        incoming_id = str(incoming.get("id") or "").strip()
+        if not incoming_id:
+            incoming_id = str(uuid.uuid4())
+            incoming["id"] = incoming_id
+            incoming["created_at"] = int(datetime.now().timestamp())
+
+        incoming["updated_at"] = int(datetime.now().timestamp())
+
+        if "provider" in incoming:
+            incoming["provider"] = str(incoming.get("provider") or "").strip().lower()
+
+        if not str(incoming.get("name") or "").strip():
+            provider = str(incoming.get("provider") or "custom").strip().lower()
+            incoming["name"] = f"{provider}:{incoming_id[:8]}"
+
+        replaced = False
+        for i, existing in enumerate(profiles):
+            if isinstance(existing, dict) and str(existing.get("id") or "").strip() == incoming_id:
+                profiles[i] = {**existing, **incoming}
+                replaced = True
+                break
+
+        if not replaced:
+            profiles.append(incoming)
+
         self._save_json(self.profiles_path, profiles)
-        return profile
+        return incoming
 
     def delete_profile(self, profile_id: str):
         profiles = self.get_profiles()
@@ -158,7 +322,7 @@ class LLMConfigService:
         # DeepSeek
         deepseek_key = app_config.settings.deepseek_api_key
         if is_real_key(deepseek_key):
-             new_profiles.append({
+            new_profiles.append({
                 "id": str(uuid.uuid4()),
                 "name": "Legacy DeepSeek",
                 "provider": "deepseek",
@@ -179,7 +343,7 @@ class LLMConfigService:
                 "editor": default_id
             }
             self._save_json(self.assignments_path, assignments)
-            logger.info(f"Migrated {len(new_profiles)} profiles")
+            logger.info("Migrated %s profiles", len(new_profiles))
 
 # Global instance
 llm_config_service = LLMConfigService()

@@ -1,6 +1,42 @@
 /**
- * InlineDiffEditor - 内联差异编辑器
- * 在完整正文中嵌入修改位置的新增/删除提示。
+ * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
+ * WenShape - Deep Context-Aware Agent-Based Novel Writing System
+ *
+ * Copyright © 2025-2026 WenShape Team
+ * License: PolyForm Noncommercial License 1.0.0
+ *
+ * 模块说明 / Module Description:
+ *   内联差异编辑器 - 在完整正文中嵌入修改位置的新增/删除提示
+ *   Inline diff editor embedding add/delete indicators within full text context.
+ */
+
+/**
+ * 内联差异编辑器 - 在原文中嵌入修改提示的差异编辑界面
+ *
+ * Displays original content with embedded inline diff indicators (additions and deletions)
+ * for contextual review. Allows users to accept or reject modifications.
+ *
+ * @component
+ * @example
+ * return (
+ *   <InlineDiffEditor
+ *     originalContent="Original text..."
+ *     revisedContent="Revised text..."
+ *     hunks={diffHunks}
+ *     onAccept={handleAccept}
+ *     onReject={handleReject}
+ *   />
+ * )
+ *
+ * @param {Object} props - Component props
+ * @param {string} [props.originalContent=''] - 原始全文 / Original full text
+ * @param {string} [props.revisedContent=''] - 修订全文 / Revised full text
+ * @param {Array} [props.hunks=[]] - 后端返回的 diff 块 / Backend diff chunks
+ * @param {Object} [props.stats={}] - 统计信息 / Statistics { additions, deletions }
+ * @param {Function} [props.onAccept] - 接受回调 / Accept callback
+ * @param {Function} [props.onReject] - 拒绝回调 / Reject callback
+ * @param {string} [props.className=''] - 自定义样式类名 / Additional CSS classes
+ * @returns {JSX.Element} 内联差异编辑器 / Inline diff editor element
  */
 
 import React, { useMemo } from 'react';
@@ -144,7 +180,7 @@ const InlineDiffEditor = ({
             </motion.div>
 
             {/* 内容区 */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+            <div className="flex-1 overflow-y-scroll editor-scrollbar p-6">
                 <div className="font-serif text-base leading-relaxed text-[var(--vscode-fg)]">
                     {mergedView.map((item, index) => {
                         if (item.type === 'unchanged') {
