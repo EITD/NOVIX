@@ -65,6 +65,7 @@ export const projectsAPI = {
   list: (): Promise<AxiosResponse<Project[]>> => api.get(`${API_BASE}/projects`),
   get: (id: string): Promise<AxiosResponse<Project>> => api.get(`${API_BASE}/projects/${id}`),
   create: (data: Partial<Project>): Promise<AxiosResponse> => api.post(`${API_BASE}/projects`, data),
+  rename: (id: string, data: { name: string }): Promise<AxiosResponse> => api.patch(`${API_BASE}/projects/${id}`, data),
   delete: (id: string): Promise<AxiosResponse> => api.delete(`${API_BASE}/projects/${id}`),
 };
 

@@ -20,6 +20,7 @@ from app.schemas.project import Project, ProjectCreate, ProjectStats
 from app.dependencies import get_card_storage, get_canon_storage, get_draft_storage
 from app.utils.path_safety import sanitize_id, validate_path_within
 from app.utils.language import normalize_language
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -230,3 +231,46 @@ async def delete_project(project_id: str):
     shutil.rmtree(project_dir)
     
     return {"success": True, "message": "Project deleted"}
+
+
+class ProjectRenameRequest(BaseModel):
+    """Request body for renaming a project."""
+
+    name: str = Field(..., min_length=1, max_length=200, description="New project name / 新项目名称")
+
+
+@router.patch("/{project_id}")
+async def rename_project(project_id: str, request: ProjectRenameRequest):
+    """Rename a project (display name only)."""
+    data_dir = Path(card_storage.data_dir)
+    project_dir = data_dir / project_id
+    try:
+        validate_path_within(project_dir, data_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+
+    project_file = project_dir / "project.yaml"
+    if not project_file.exists():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    new_name = (request.name or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Project name is required")
+
+    data = await card_storage.read_yaml(project_file) or {}
+    data["name"] = new_name
+    data["updated_at"] = datetime.now().isoformat()
+    await card_storage.write_yaml(project_file, data)
+
+    language = normalize_language(data.get("language"), default="zh")
+    return {
+        "success": True,
+        "project": {
+            "id": project_id,
+            "name": data.get("name", project_id),
+            "description": data.get("description", ""),
+            "language": language,
+            "created_at": data.get("created_at", ""),
+            "updated_at": data.get("updated_at", ""),
+        },
+    }

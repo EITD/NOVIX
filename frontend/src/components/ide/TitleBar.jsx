@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useIDE } from '../../context/IDEContext';
 import useSWR, { mutate } from 'swr';
 import { projectsAPI } from '../../api';
-import { Bot, ChevronDown, Folder, Plus, Check, Trash2, Home } from 'lucide-react';
+import { Bot, ChevronDown, Folder, Plus, Check, Trash2, Home, Pencil } from 'lucide-react';
 import { cn } from '../ui/core';
 import logger from '../../utils/logger';
 import { useLocale } from '../../i18n';
@@ -94,6 +94,27 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
     }
   };
 
+  const handleRenameProject = async (project, e) => {
+    e.stopPropagation();
+    const nextName = prompt(t('titleBar.renameProjectPrompt'), project?.name || '');
+    if (nextName == null) return;
+    const trimmed = String(nextName).trim();
+    if (!trimmed) {
+      alert(t('titleBar.renameProjectEmpty'));
+      return;
+    }
+    try {
+      await projectsAPI.rename(project.id, { name: trimmed });
+      await mutate('all-projects');
+    } catch (error) {
+      const detail = error?.response?.data?.detail || error?.response?.data?.error;
+      alert(t('titleBar.renameProjectFailed', { message: detail || error?.message || 'Unknown error' }));
+    }
+  };
+
+  const effectiveProjectName =
+    projectName || projects.find((p) => p?.id === projectId)?.name || '';
+
   return (
     <div className="h-10 min-h-[40px] bg-[var(--vscode-sidebar-bg)] border-b border-[var(--vscode-sidebar-border)] flex items-center justify-between px-4 select-none flex-shrink-0">
       <div className="flex items-center gap-3">
@@ -119,7 +140,7 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
             )}
           >
             <Folder size={14} />
-            <span className="max-w-[120px] truncate">{projectName || t('titleBar.selectProject')}</span>
+            <span className="max-w-[120px] truncate">{effectiveProjectName || t('titleBar.selectProject')}</span>
             <ChevronDown size={12} className={cn('transition-transform', menuOpen && 'rotate-180')} />
           </button>
 
@@ -142,6 +163,14 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
                     {project.id === projectId && (
                       <Check size={14} className="text-[var(--vscode-focus-border)] flex-shrink-0" />
                     )}
+                    <button
+                      onClick={(e) => handleRenameProject(project, e)}
+                      className="opacity-70 group-hover:opacity-100 p-1 hover:bg-[var(--vscode-list-hover)] rounded text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] transition-all flex-shrink-0"
+                      title={t('titleBar.renameProject')}
+                      aria-label={t('titleBar.renameProject')}
+                    >
+                      <Pencil size={12} />
+                    </button>
                     <button
                       onClick={(e) => handleDeleteProject(project.id, e)}
                       className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded text-[var(--vscode-fg-subtle)] hover:text-red-500 transition-all flex-shrink-0"
